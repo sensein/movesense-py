@@ -1,0 +1,6 @@
+bleak==1.1.1
+pyobjc-core==11.1
+pyobjc-framework-Cocoa==11.1
+pyobjc-framework-CoreBluetooth==11.1
+pyobjc-framework-libdispatch==11.1
+typing_extensions==4.15.0
