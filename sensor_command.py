@@ -116,18 +116,30 @@ class SensorCommand:
     
     async def _discover_and_connect(self) -> bool:
         """Combined discover and connect operation."""
-        # Discover device
-        devices = await BleakScanner.discover(timeout=10)
+        # Discover device with early detection callback
+        device_found = asyncio.Event()
+        target_device = None
         
-        for device in devices:
+        def detection_callback(device, advertisement_data):
+            nonlocal target_device
             self.logger.debug(f"Found device: {device}")
             if device.name and device.name.endswith(self.end_of_serial):
                 self.logger.info(f"Target device found: {device.name}")
-                self.device_address = device.address
-                self.device_name = device.name
-                break
-        else:
+                target_device = device
+                device_found.set()
+        
+        scanner = BleakScanner(detection_callback=detection_callback)
+        await scanner.start()
+        
+        try:
+            # Wait for device to be found or timeout after 10 seconds
+            await asyncio.wait_for(device_found.wait(), timeout=10)
+            self.device_address = target_device.address
+            self.device_name = target_device.name
+        except asyncio.TimeoutError:
             raise RuntimeError(f"Device ending with '{self.end_of_serial}' not found")
+        finally:
+            await scanner.stop()
         
         # Connect to device
         try:
@@ -681,27 +693,6 @@ async def run_sensor_command(end_of_serial: str, command_type: CommandType, **kw
         return {'success': False, 'error': str(e)}
 
 
-# Example usage
 if __name__ == "__main__":
-    import sys
-    
-    logging.basicConfig(level=logging.INFO)
-    
-    if len(sys.argv) < 2:
-        print("Usage: python sensor_command.py <end_of_serial> [command]")
-        sys.exit(1)
-    
-    end_of_serial = sys.argv[1]
-    command = sys.argv[2] if len(sys.argv) > 2 else "status"
-    
-    async def main():
-        if command == "status":
-            result = await run_sensor_command(end_of_serial, CommandType.STATUS)
-        elif command == "fetch":
-            result = await run_sensor_command(end_of_serial, CommandType.FETCH_DATA, log_id=1)
-        else:
-            result = await run_sensor_command(end_of_serial, CommandType.STATUS)
-        
-        print(f"Result: {result}")
-    
-    asyncio.run(main())
+    print("This module is intended to be imported and used within other scripts.")
+    exit(1)
