@@ -2,6 +2,7 @@ import sys
 import json
 import os
 import csv
+from datetime import datetime
 
 ECG_LSB_TO_MV = 0.000381469726563
 
@@ -37,6 +38,18 @@ def main():
             print(f"Processing stream: {stream_name}")
             print(f"Number of chunks: {len(entries)}")
 
+            time_detailed = {}
+            for sample in samples:
+                if "TimeDetailed" in sample:
+                    time_detailed = sample["TimeDetailed"]
+                    break
+
+            relative_time = time_detailed.get("relativeTime", "")
+            relative_time = int(relative_time) / 1000
+            utc_time = time_detailed.get("utcTime", "")
+            utc_time = int(utc_time)
+            utc_time = datetime.utcfromtimestamp(utc_time / 1000000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    
             # Skip non-data entries (like TimeDetailed)
             if not any('Samples' in entry or 'samples' in entry for entry in entries if isinstance(entry, dict)):
                 print(f"Skipping {stream_name} - no sample data found")
@@ -122,7 +135,9 @@ def main():
             
             with open(output_file, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(["Timestamp_ms", "Value"])
+                writer.writerow(["Timestamp_ms", "Value", "Relative Time:", relative_time, "UTC Time:", utc_time])
+                print(f"Relative time", relative_time)
+                print(f"UTC time", utc_time)
                 for ts, val in all_data:
                     writer.writerow([f"{ts}", f"{val:.3f}"])
 
