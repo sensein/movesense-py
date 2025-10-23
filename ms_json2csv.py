@@ -106,7 +106,7 @@ def main():
                     sample_timestamp = int(timestamp + i * dt)
                     all_data.append((sample_timestamp, value))
 
-                    print(f"  sample {i:02d}: {sample_timestamp} ms → {value:.6f} mV")
+                    #print(f"  sample {i:02d}: {sample_timestamp} ms -> {value:.6f} mV")
 
             print(f"\nTotal samples collected: {len(all_data)}")
             
@@ -118,7 +118,7 @@ def main():
             all_data.sort(key=lambda x: x[0])
             
             # Write to CSV
-            print(f"\nWriting to: {output_file}")
+            print(f"\n Writing to: {output_file}")
             
             with open(output_file, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
@@ -126,7 +126,7 @@ def main():
                 for ts, val in all_data:
                     writer.writerow([f"{ts}", f"{val:.3f}"])
 
-            print(f"✓ Successfully saved {len(all_data)} samples")
+            print(f"Successfully saved {len(all_data)} samples")
             print(f"\n CSV file saved successfully to: {os.path.abspath(output_file)}")
 
 if __name__ == "__main__":
