@@ -136,6 +136,8 @@ def convert_json_to_csv(input_file, output_file):
                     sample_timestamp = int(timestamp + i * dt)
                     all_data.append((sample_timestamp, value))
 
+                    #print(f"  sample {i:02d}: {sample_timestamp} ms -> {value:.6f} mV")
+
             print(f"\nTotal samples collected: {len(all_data)}")
             
             if len(all_data) == 0:
