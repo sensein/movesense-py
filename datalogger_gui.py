@@ -7,7 +7,7 @@ import os
 class DataloggerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Python Datalogger Tool")
+        self.root.title("Movesense Flash Datalogger Tool")
         self.root.geometry("900x700")
         
         # Configure grid weights
@@ -171,10 +171,10 @@ class DataloggerGUI:
                 
                 if process.returncode == 0:
                     self.root.after(0, self.status_var.set, "Command completed successfully")
-                    self.root.after(0, self.log_output, "\n✓ Command completed successfully\n")
+                    #self.root.after(0, self.log_output, "\n Command completed successfully\n")
                 else:
                     self.root.after(0, self.status_var.set, f"Command failed (code {process.returncode})")
-                    self.root.after(0, self.log_output, f"\n✗ Command failed with code {process.returncode}\n")
+                    #self.root.after(0, self.log_output, f"\n Command failed with code {process.returncode}\n")
             
             except Exception as e:
                 self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
@@ -256,10 +256,18 @@ class DataloggerGUI:
                 # Step 2: Convert SBEM to JSON
                 self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---\n")
                 self.root.after(0, self.status_var.set, "Converting SBEM to JSON...")
+
+                # Create sbem-files folder if it doesn't exist
+                sbem_folder = os.path.join(output_dir, "sbem-files")
+                if not os.path.exists(sbem_folder):
+                    os.makedirs(sbem_folder)
+                    self.root.after(0, self.log_output, f"Created folder: {sbem_folder}\n")
                 
                 # Find all .sbem files in output directory
                 sbem_files = []
                 for root_dir, dirs, files in os.walk(output_dir):
+                    if 'sbem-files' in root_dir:
+                        continue
                     for file in files:
                         if file.endswith('.sbem'):
                             sbem_files.append(os.path.join(root_dir, file))
@@ -269,11 +277,16 @@ class DataloggerGUI:
                 else:
                     for sbem_file in sbem_files:
                         self.root.after(0, self.log_output, f"Converting: {sbem_file}\n")
+
+                        # Get directory and filename
+                        original_dir = os.path.dirname(sbem_file)
+                        sbem_filename = os.path.basename(sbem_file)
                         
-                        # Create output JSON filename (same name, different extension)
-                        json_file = os.path.splitext(sbem_file)[0] + '.json'
+                        # Create output JSON filename in the original location
+                        json_filename = os.path.splitext(sbem_filename)[0] + '.json'
+                        json_file = os.path.join(original_dir, json_filename)
                         
-                        # Call sbem2json.exe with correct flags
+                        # Call sbem2json.exe - convert from original location
                         converter_cmd = ["sbem2json.exe", "--sbem2json", sbem_file, "--output", json_file]
                         
                         conv_process = subprocess.Popen(
@@ -289,10 +302,18 @@ class DataloggerGUI:
                         
                         if conv_process.returncode != 0:
                             self.root.after(0, self.log_output, 
-                                f"Warning: Conversion failed for {sbem_file}\n")
+                                f"Warning: Conversion failed for {sbem_filename}\n")
                         else:
                             self.root.after(0, self.log_output, 
                                 f"Created: {json_file}\n")
+                            
+                            # Move SBEM file to sbem-files folder AFTER successful conversion
+                            new_sbem_path = os.path.join(sbem_folder, sbem_filename)
+                            try:
+                                os.rename(sbem_file, new_sbem_path)
+                                self.root.after(0, self.log_output, f"Moved SBEM to: {new_sbem_path}\n")
+                            except Exception as e:
+                                self.root.after(0, self.log_output, f"Warning: Could not move SBEM file: {str(e)}\n")
                 
                 # Step 3: Convert JSON to CSV
                 self.root.after(0, self.log_output, "\n--- Converting JSON to CSV ---\n")
