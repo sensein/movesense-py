@@ -247,14 +247,12 @@ class DataloggerGUI:
                 process.wait()
                 
                 if process.returncode == 0:
-                    self.root.after(0, self.log_output, "\nâœ“ Fetch completed successfully\n")
+                    self.root.after(0, self.log_output, "\n Fetch completed successfully\n")
                 
                 else:
                     self.root.after(0, self.status_var.set, f"Fetch failed (code {process.returncode})")
-                    self.root.after(0, self.log_output, f"\n✗ Fetch failed with code {process.returncode}\n")
-                
-                self.root.after(0, self.log_output, "\n✗ Fetch completed successfully\n")
-
+                    self.root.after(0, self.log_output, f"\n Fetch failed with code {process.returncode}\n")
+            
                 # Step 2: Convert SBEM to JSON
                 self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---\n")
                 self.root.after(0, self.status_var.set, "Converting SBEM to JSON...")
