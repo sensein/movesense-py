@@ -3,6 +3,12 @@ from tkinter import ttk, scrolledtext, filedialog, messagebox
 import subprocess
 import threading
 import os
+import sys
+
+if sys.platform == 'win32':
+    CREATE_NO_WINDOW = 0x08000000
+else:
+    CREATE_NO_WINDOW = 0
 
 class DataloggerGUI:
     def __init__(self, root):
@@ -126,7 +132,21 @@ class DataloggerGUI:
     
     def build_command(self, command, extra_args=None):
         """Build command list for subprocess"""
-        cmd = ["python", "datalogger_tool.py"]
+
+        # Determine if we're running as a bundled executable
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            application_path = sys._MEIPASS  # PyInstaller extraction path
+            python_exe = "pythonw.exe"
+        else:
+            # Running as normal Python script
+            application_path = os.path.dirname(os.path.abspath(__file__))
+            python_exe = "python"
+        
+        # Build path to datalogger_tool.py
+        datalogger_script = os.path.join(application_path, "datalogger_tool.py")
+        
+        cmd = [python_exe, datalogger_script]
         
         if self.verbose_var.get():
             cmd.append("-V")
@@ -161,7 +181,8 @@ class DataloggerGUI:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    bufsize=1
+                    bufsize=1,
+                    creationflags = CREATE_NO_WINDOW
                 )
                 
                 for line in process.stdout:
@@ -238,7 +259,8 @@ class DataloggerGUI:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    bufsize=1
+                    bufsize=1,
+                    creationflags=CREATE_NO_WINDOW
                 )
                 
                 for line in process.stdout:
@@ -285,15 +307,24 @@ class DataloggerGUI:
                         # Create output JSON filename in the original location
                         json_filename = os.path.splitext(sbem_filename)[0] + '.json'
                         json_file = os.path.join(original_dir, json_filename)
+
+                        # For sbem2json.exe
+                        if getattr(sys, 'frozen', False):
+                            application_path = sys._MEIPASS
+                        else:
+                            application_path = os.path.dirname(os.path.abspath(__file__))
+
+                        sbem2json_exe = os.path.join(application_path, "sbem2json.exe")
                         
                         # Call sbem2json.exe - convert from original location
-                        converter_cmd = ["sbem2json.exe", "--sbem2json", sbem_file, "--output", json_file]
+                        converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", json_file]
                         
                         conv_process = subprocess.Popen(
                             converter_cmd,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
-                            text=True
+                            text=True,
+                            creationflags=CREATE_NO_WINDOW
                         )
                         
                         conv_output, _ = conv_process.communicate()
@@ -334,15 +365,17 @@ class DataloggerGUI:
                         
                         # Create output CSV filename (same name, different extension)
                         csv_file = os.path.splitext(json_file)[0] + '.csv'
-                        
+
+                        ms_json2csv_script = os.path.join(application_path, "ms_json2csv.py")
                         # Call your Python script with input and output files
-                        csv_cmd = ["python", "ms_json2csv.py", json_file, csv_file]
+                        csv_cmd = ["python", ms_json2csv_script, json_file, csv_file]
                         
                         csv_process = subprocess.Popen(
                             csv_cmd,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
-                            text=True
+                            text=True,
+                            creationflags=CREATE_NO_WINDOW
                         )
                         
                         csv_output, _ = csv_process.communicate()
@@ -355,6 +388,53 @@ class DataloggerGUI:
                         else:
                             self.root.after(0, self.log_output, 
                                 f"Created: {csv_file}\n")
+                            
+                # Step 4: Convert CSV to EDF
+                self.root.after(0, self.log_output, "\n--- Converting CSV to EDF ---\n")
+                self.root.after(0, self.status_var.set, "Converting CSV to EDF...")
+
+                # Find all .csv files in output directory
+                csv_files = []
+                for root_dir, dirs, files in os.walk(output_dir):
+                    for file in files:
+                        if file.endswith('.csv'):
+                            csv_files.append(os.path.join(root_dir, file))
+
+                if not csv_files:
+                    self.root.after(0, self.log_output, "No CSV files found to convert\n")
+                else:
+                    for csv_file in csv_files:
+                        self.root.after(0, self.log_output, f"Converting: {csv_file}\n")
+                        
+                        # Create output EDF filename (same name, different extension)
+                        edf_file = os.path.splitext(csv_file)[0] + '.edf'
+
+                        csv2edf_script = os.path.join(application_path, "csv2edf.py")
+                        # Call csv2edf.py with just the input file (auto-detect frequency, auto-scale)
+                        edf_cmd = ["python", csv2edf_script, csv_file]
+                        
+                        edf_process = subprocess.Popen(
+                            edf_cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            creationflags=CREATE_NO_WINDOW
+                        )
+                        
+                        edf_output, _ = edf_process.communicate()
+                        if edf_output:
+                            self.root.after(0, self.log_output, edf_output)
+                        
+                        if edf_process.returncode != 0:
+                            self.root.after(0, self.log_output, 
+                                f"Warning: EDF conversion failed for {csv_file}\n")
+                        else:
+                            self.root.after(0, self.log_output, 
+                                f"Created: {edf_file}\n")
+
+                # All done
+                self.root.after(0, self.status_var.set, "All conversions completed!")
+                self.root.after(0, self.log_output, "\n All conversions completed successfully!\n")
                 
                 # All done
                 self.root.after(0, self.status_var.set, "All conversions completed!")
