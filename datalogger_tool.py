@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 import sys
 import asyncio
 import logging
@@ -60,6 +61,8 @@ async def fetch_data(serial, args):
             
             log_id = 1 # start with log id 1, fetch all the logs on sensor
             while True:
+                start_time = datetime.now()
+                logging.info(f"Fetching log {log_id} from device {serial}")
                 output_file = None
                 if hasattr(args, 'output') and args.output:
                     output_file = f"{args.output}/log_{serial}_{log_id}.sbem"
@@ -72,9 +75,21 @@ async def fetch_data(serial, args):
                     else:
                         result = {'success': True, 'message': f'Fetched {log_id - 1} logs'}
                     break
+                else:
+                    end_time = datetime.now()
+                    duration = (end_time - start_time).total_seconds()
+                    logging.info(f"Fetched log {log_id}, size {result.get('size', 0)/1024} kB in {duration:.2f} seconds. speed: {result.get('size', 0)/1024/duration:.2f} kB/s")
 
-                fetched_files.append(result.get('filename', 'unknown'))
+                filename = result.get('filename')
+                if filename:
+                    fetched_files.append(filename)
+    
                 log_id += 1
+
+            # Reset sensor to avoid the 409 error on Sensor firmware <= 2.3.1
+            logging.info(f"Resetting device {serial} to system mode <5>")
+            await sensor.set_system_mode(5)
+
             return {'success': True, 'files_fetched': fetched_files}
 
     except Exception as e:
