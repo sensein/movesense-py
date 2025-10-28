@@ -62,10 +62,10 @@ Output includes:
 Set up logging configuration with resource paths:
 
 ```bash
-python datalogger_tool.py config -s 000455 -p "/Meas/Temp" -p "/Meas/ECG/125/mV"
+python datalogger_tool.py config -s 000455 -p "/Meas/Temp" "/Meas/ECG/125/mV"
 ```
 
-- `-p, --path`: Resource paths to log (can be specified multiple times, max count depends on the sensor model)
+- `-p, --path`: Resource paths to add to configuration. separate multiple paths with space.
 - Automatically adds `/Time/Detailed` to configuration
 
 #### 3. Start Logging
@@ -121,7 +121,7 @@ python datalogger_tool.py erasemem -s 000455 --force
 python datalogger_tool.py status -s 000455
 
 # 2. Configure logging paths
-python datalogger_tool.py config -s 000455 -p "/Meas/Temp" -p "/Meas/Acc/13"
+python datalogger_tool.py config -s 000455 -p "/Meas/Temp" "/Meas/Acc/13"
 
 # 3. Start logging
 python datalogger_tool.py start -s 000455

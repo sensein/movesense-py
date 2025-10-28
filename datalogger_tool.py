@@ -267,34 +267,35 @@ def main():
 
     # Status command
     status_parser = subparsers.add_parser('status', help='Check device status')
-    status_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers')
+    status_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers. separate multiple serial numbers with space.')
 
     # Config command
     config_parser = subparsers.add_parser('config', help='Configure datalogger', description='Configure datalogger settings')
-    config_parser.add_argument('-p', '--path', nargs='+', help='Resource path to add to configuration. Can be multiple -p options')
-    config_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers')
+    config_parser.add_argument('-p', '--path', nargs='+', help='Resource paths to add to configuration. separate multiple paths with space.')
+    config_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers. separate multiple serial numbers with space.')
 
     # Start command
     start_parser = subparsers.add_parser('start', help='Start logging')
-    start_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers')
+    start_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers. separate multiple serial numbers with space.')
 
     # Stop command
     stop_parser = subparsers.add_parser('stop', help='Stop logging')
-    stop_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers')
+    stop_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers. separate multiple serial numbers with space.')
 
     # Fetch command
     fetch_parser = subparsers.add_parser('fetch', help='Fetch data')
     fetch_parser.add_argument('-o', '--output', help='Output directory')
-    fetch_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers')
+    fetch_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers. separate multiple serial numbers with space.')
 
     # Erasemem command
     erasemem_parser = subparsers.add_parser('erasemem', help='Erase device memory')
     erasemem_parser.add_argument('--force', action='store_true', help='Force erase without confirmation')
-    erasemem_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers')
+    erasemem_parser.add_argument('-s', '--serial_numbers', nargs='+', help='List of serial numbers. separate multiple serial numbers with space.')
 
     args = parser.parse_args()
     if args.verbose:
         logging.getLogger().setLevel(logging.INFO)
+        logging.debug("args: " + str(args))
 
     if args.command is None:
         parser.print_help()
