@@ -470,6 +470,8 @@ class SensorCommand:
             dirname = os.path.dirname(filename)
             if dirname:
                 os.makedirs(dirname, exist_ok=True)
+
+            last_offset = 0
             with open(filename, 'wb') as f_log:
                 while True:
                     try:
@@ -485,6 +487,7 @@ class SensorCommand:
                             if len(data_payload) >= 4:
                                 dv = DataView(data_payload)
                                 offset = dv.get_uint_32(0)
+                                last_offset = offset
                                 bytes_to_write = data_payload[4:]
                                 
                                 if len(bytes_to_write) > 0:
@@ -507,6 +510,7 @@ class SensorCommand:
             return {
                 'success': True,
                 'filename': filename,
+                'size': last_offset,
                 'log_id': log_id
             }
             
