@@ -14,7 +14,7 @@ class DataloggerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Movesense Flash Datalogger Tool")
-        self.root.geometry("900x700")
+        self.root.geometry("800x600")
         
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
@@ -26,65 +26,86 @@ class DataloggerGUI:
         main_frame.columnconfigure(0, weight=1)
         
         # Serial Numbers Section
-        serial_frame = ttk.LabelFrame(main_frame, text="Device Serial Numbers", padding="10")
+        serial_frame = ttk.LabelFrame(main_frame, text="Device Serial Number", padding="10")
         serial_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         serial_frame.columnconfigure(1, weight=1)
         
-        ttk.Label(serial_frame, text="Serial Numbers:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Label(serial_frame, text="1.    Serial Number:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
         self.serial_entry = ttk.Entry(serial_frame, width=50)
         self.serial_entry.grid(row=0, column=1, sticky=(tk.W, tk.E))
         # self.serial_entry.insert(0, "last five digits from serial number")
-        ttk.Label(serial_frame, text="(space-separated, e.g., 000455 000456)", 
+        ttk.Label(serial_frame, text="(e.g., 254230002030)", 
                  font=("", 8), foreground="gray").grid(row=1, column=1, sticky=tk.W)
         
         # Verbose checkbox
-        self.verbose_var = tk.BooleanVar()
-        ttk.Checkbutton(serial_frame, text="Verbose logging", 
-                       variable=self.verbose_var).grid(row=0, column=2, padx=(10, 0))
+        # self.verbose_var = tk.BooleanVar()
+        # ttk.Checkbutton(serial_frame, text="Verbose logging", 
+        #                variable=self.verbose_var).grid(row=0, column=2, padx=(10, 0))
         
         # Commands Section
         cmd_frame = ttk.LabelFrame(main_frame, text="Commands", padding="10")
         cmd_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+
+        # Configure columns once at the top
+        cmd_frame.columnconfigure(0, minsize=25)   # narrow column for numbers
+        cmd_frame.columnconfigure(1, weight=0)     # buttons
+        cmd_frame.columnconfigure(2, weight=1)     # text fields, labels, frames stretch
         
-        # Row 0: Status
-        ttk.Button(cmd_frame, text="Check Status", 
-                  command=self.check_status, width=20).grid(row=0, column=0, padx=5, pady=5)
-        ttk.Label(cmd_frame, text="Check device connection and info").grid(row=0, column=1, sticky=tk.W, padx=5)
+        # Row 0: Connect / Status
+        ttk.Label(cmd_frame, text="2.").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Button(cmd_frame, text="Connect",
+                command=self.check_status, width=20).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(cmd_frame, text="Check device connection and info").grid(row=0, column=2, sticky=tk.W, padx=5)
         
         # Row 1: Config
-        ttk.Button(cmd_frame, text="Configure Logging", 
-                  command=self.configure_logging, width=20).grid(row=1, column=0, padx=5, pady=5)
-        self.config_entry = ttk.Entry(cmd_frame, width=50)
-        self.config_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5)
-        self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        ttk.Label(cmd_frame, text="Resource paths (space-separated)", 
-                 font=("", 8), foreground="gray").grid(row=2, column=1, sticky=tk.W, padx=5)
+        # ttk.Button(cmd_frame, text="Configure Logging", 
+        #           command=self.configure_logging, width=20).grid(row=0, column=2, padx=5, pady=5)
+        # self.config_entry = ttk.Entry(cmd_frame, width=30)
+        # self.config_entry.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=5)
+        # self.config_entry.insert(0, "/Meas/ECG/200/mV")
+        # self.config_entry.state(["disabled"])
+        # ttk.Label(cmd_frame, text="Resource paths (space-separated)", 
+        #          font=("", 8), foreground="gray").grid(row=2, column=1, sticky=tk.W, padx=5)
         
         # Row 3: Start/Stop
-        button_frame = ttk.Frame(cmd_frame)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=5)
-        ttk.Button(button_frame, text="Start Logging", 
-                  command=self.start_logging, width=20).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Stop Logging", 
-                  command=self.stop_logging, width=20).pack(side=tk.LEFT, padx=5)
+        # button_frame = ttk.Frame(cmd_frame)
+        # button_frame.grid(row=3, column=0, columnspan=2, pady=30)
+        # ttk.Button(button_frame, text="Start Logging", 
+        #           command=self.start_logging, width=20).pack(side=tk.LEFT, padx=5)
+        # ttk.Button(button_frame, text="Stop Logging", 
+        #           command=self.stop_logging, width=20).pack(side=tk.LEFT, padx=5)
+        # Row 3: Start Logging
+        ttk.Label(cmd_frame, text="3.").grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Button(cmd_frame, text="Start Logging",
+                command=self.start_logging, width=20).grid(row=3, column=1, padx=5, pady=5)
+        ttk.Label(cmd_frame, text="Begin data logging").grid(row=3, column=2, sticky=tk.W, padx=5)
+
+        # Row 3: Stop Logging
+        ttk.Label(cmd_frame, text="4.").grid(row=4, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Button(cmd_frame, text="Stop Logging",
+                command=self.stop_logging, width=20).grid(row=4, column=1, padx=5, pady=5)
+        ttk.Label(cmd_frame, text="Stop the logging process").grid(row=4, column=2, sticky=tk.W, padx=5)
         
         # Row 4: Fetch
-        ttk.Button(cmd_frame, text="Fetch Data", 
-                  command=self.fetch_data, width=20).grid(row=4, column=0, padx=5, pady=5)
+        ttk.Label(cmd_frame, text="5.").grid(row=5, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Button(cmd_frame, text="Load Data",
+                command=self.fetch_data, width=20).grid(row=5, column=1, padx=5, pady=5)
+
         fetch_frame = ttk.Frame(cmd_frame)
-        fetch_frame.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=5)
+        fetch_frame.grid(row=5, column=2, sticky=(tk.W, tk.E), padx=5)
+        ttk.Label(fetch_frame, text="Path:").pack(side=tk.LEFT, padx=(0, 5))
         self.output_entry = ttk.Entry(fetch_frame)
         self.output_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.output_entry.insert(0, "./data")
-        ttk.Button(fetch_frame, text="Browse...", 
-                  command=self.browse_output).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(fetch_frame, text="Browse...",
+                command=self.browse_output).pack(side=tk.LEFT, padx=(5, 0))
         
         # Row 5: Erase Memory
-        ttk.Button(cmd_frame, text="Erase Memory", 
-                  command=self.erase_memory, width=20).grid(row=5, column=0, padx=5, pady=5)
-        self.force_var = tk.BooleanVar()
-        ttk.Checkbutton(cmd_frame, text="Force (skip confirmation)", 
-                       variable=self.force_var).grid(row=5, column=1, sticky=tk.W, padx=5)
+        # ttk.Button(cmd_frame, text="Erase Memory", 
+        #           command=self.erase_memory, width=20).grid(row=5, column=0, padx=5, pady=5)
+        # self.force_var = tk.BooleanVar()
+        # ttk.Checkbutton(cmd_frame, text="Force (skip confirmation)", 
+        #                variable=self.force_var).grid(row=5, column=1, sticky=tk.W, padx=5)
         
         # Output Section
         output_frame = ttk.LabelFrame(main_frame, text="Output", padding="10")
@@ -92,7 +113,7 @@ class DataloggerGUI:
         output_frame.columnconfigure(0, weight=1)
         output_frame.rowconfigure(0, weight=1)
         
-        self.output_text = scrolledtext.ScrolledText(output_frame, height=20, width=80, 
+        self.output_text = scrolledtext.ScrolledText(output_frame, height=10, width=80, 
                                                      wrap=tk.WORD, state='disabled')
         self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
@@ -105,6 +126,17 @@ class DataloggerGUI:
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
                               relief=tk.SUNKEN, anchor=tk.W)
         status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E))
+
+        # Erase Memory
+        erase_frame = ttk.Frame(main_frame, padding="5")
+        erase_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))  # frame spans full width
+        erase_frame.columnconfigure(0, weight=1)  # push content to the right
+
+        ttk.Button(erase_frame, text="Erase Memory",
+                command=self.erase_memory, width=20).grid(row=0, column=1, padx=5, sticky=tk.E)
+        # self.force_var = tk.BooleanVar()
+        # ttk.Checkbutton(erase_frame, text="Force (skip confirmation)",
+        #                 variable=self.force_var).grid(row=0, column=2, padx=5, sticky=tk.E)
         
         # Configure row weights for resizing
         main_frame.rowconfigure(2, weight=1)
@@ -148,8 +180,8 @@ class DataloggerGUI:
         
         cmd = [python_exe, datalogger_script]
         
-        if self.verbose_var.get():
-            cmd.append("-V")
+        # if self.verbose_var.get():
+        #     cmd.append("-V")
         
         cmd.append(command)
         
@@ -191,11 +223,11 @@ class DataloggerGUI:
                 process.wait()
                 
                 if process.returncode == 0:
-                    self.root.after(0, self.status_var.set, "Command completed successfully")
-                    #self.root.after(0, self.log_output, "\n Command completed successfully\n")
+                    self.root.after(0, self.status_var.set, "Command completed")
+                    self.root.after(0, self.log_output, "\n Command completed\n")
                 else:
                     self.root.after(0, self.status_var.set, f"Command failed (code {process.returncode})")
-                    #self.root.after(0, self.log_output, f"\n Command failed with code {process.returncode}\n")
+                    self.root.after(0, self.log_output, f"\n Command failed with code {process.returncode}\n")
             
             except Exception as e:
                 self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
@@ -269,7 +301,7 @@ class DataloggerGUI:
                 process.wait()
                 
                 if process.returncode == 0:
-                    self.root.after(0, self.log_output, "\n Fetch completed successfully\n")
+                    self.root.after(0, self.log_output, "\n Fetch completed.\n")
                 
                 else:
                     self.root.after(0, self.status_var.set, f"Fetch failed (code {process.returncode})")
@@ -293,6 +325,20 @@ class DataloggerGUI:
                     for file in files:
                         if file.endswith('.sbem'):
                             sbem_files.append(os.path.join(root_dir, file))
+
+                            # sbem_path = os.path.join(root_dir, file)
+                            # # Check if this file already exists in sbem-files folder
+                            # if os.path.exists(os.path.join(sbem_folder, file)):
+                            #     self.root.after(0, self.log_output, 
+                            #         f"Skipping {file} - already processed (found in sbem-files)\n")
+                            #     # Remove the duplicate from the main folder
+                            #     try:
+                            #         os.remove(sbem_path)
+                            #         self.root.after(0, self.log_output, f"Removed duplicate: {sbem_path}\n")
+                            #     except Exception as e:
+                            #         self.root.after(0, self.log_output, f"Warning: Could not remove duplicate: {str(e)}\n")
+                            # else:
+                            #     sbem_files.append(sbem_path)
                 
                 if not sbem_files:
                     self.root.after(0, self.log_output, "No SBEM files found to convert\n")
@@ -355,7 +401,14 @@ class DataloggerGUI:
                 for root_dir, dirs, files in os.walk(output_dir):
                     for file in files:
                         if file.endswith('.json'):
-                            json_files.append(os.path.join(root_dir, file))
+                            json_path = os.path.join(root_dir, file)
+                            # Check if corresponding CSV already exists
+                            csv_path = os.path.splitext(json_path)[0] + '.csv'
+                            if os.path.exists(csv_path):
+                                self.root.after(0, self.log_output, 
+                                    f"Skipping {file} - CSV already exists\n")
+                            else:
+                                json_files.append(json_path)
                 
                 if not json_files:
                     self.root.after(0, self.log_output, "No JSON files found to convert\n")
@@ -398,7 +451,14 @@ class DataloggerGUI:
                 for root_dir, dirs, files in os.walk(output_dir):
                     for file in files:
                         if file.endswith('.csv'):
-                            csv_files.append(os.path.join(root_dir, file))
+                            csv_path = os.path.join(root_dir, file)
+                            # Check if corresponding EDF already exists
+                            edf_path = os.path.splitext(csv_path)[0] + '.edf'
+                            if os.path.exists(edf_path):
+                                self.root.after(0, self.log_output, 
+                                    f"Skipping {file} - EDF already exists\n")
+                            else:
+                                csv_files.append(csv_path)
 
                 if not csv_files:
                     self.root.after(0, self.log_output, "No CSV files found to convert\n")
@@ -433,12 +493,12 @@ class DataloggerGUI:
                                 f"Created: {edf_file}\n")
 
                 # All done
-                self.root.after(0, self.status_var.set, "All conversions completed!")
-                self.root.after(0, self.log_output, "\n All conversions completed successfully!\n")
+                self.root.after(0, self.status_var.set, "All conversions completed.")
+                self.root.after(0, self.log_output, "\n All conversions completed.\n")
                 
                 # All done
-                self.root.after(0, self.status_var.set, "All conversions completed!")
-                self.root.after(0, self.log_output, "\n All conversions completed successfully!\n")
+                self.root.after(0, self.status_var.set, "All conversions completed.")
+                self.root.after(0, self.log_output, "\n All conversions completed.\n")
             
             except Exception as e:
                 self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
@@ -449,17 +509,16 @@ class DataloggerGUI:
     
     def erase_memory(self):
         """Erase device memory"""
-        if not self.force_var.get():
-            result = messagebox.askyesno(
-                "Confirm Erase",
-                "Are you sure you want to erase all logged data?\nThis action cannot be undone!"
-            )
-            if not result:
-                self.log_output("\nMemory erase cancelled by user\n")
-                return
-        
-        extra_args = ["--force"] if self.force_var.get() else []
-        cmd = self.build_command("erasemem", extra_args)
+        result = messagebox.askyesno(
+            "Confirm Erase",
+            "Are you sure you want to erase all logged data?\nThis action cannot be undone!"
+        )
+        if not result:
+            self.log_output("\nMemory erase cancelled by user\n")
+            return
+
+        # Build and run erase command (no --force anymore)
+        cmd = self.build_command("erasemem")
         self.run_command(cmd)
     
     def browse_output(self):
