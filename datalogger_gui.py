@@ -4,6 +4,7 @@ import subprocess
 import threading
 import os
 import sys
+import time
 
 if sys.platform == 'win32':
     CREATE_NO_WINDOW = 0x08000000
@@ -15,6 +16,8 @@ class DataloggerGUI:
         self.root = root
         self.root.title("Movesense Flash Datalogger Tool")
         self.root.geometry("800x600")
+
+        self.logging_configured = False
         
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
@@ -58,12 +61,12 @@ class DataloggerGUI:
         ttk.Label(cmd_frame, text="Check device connection and info").grid(row=0, column=2, sticky=tk.W, padx=5)
         
         # Row 1: Config
-        # ttk.Button(cmd_frame, text="Configure Logging", 
-        #           command=self.configure_logging, width=20).grid(row=0, column=2, padx=5, pady=5)
-        # self.config_entry = ttk.Entry(cmd_frame, width=30)
-        # self.config_entry.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=5)
-        # self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        # self.config_entry.state(["disabled"])
+        ttk.Button(cmd_frame, text="Configure Logging", 
+                  command=self.configure_logging, width=20).grid(row=0, column=3, padx=5, pady=5)
+        self.config_entry = ttk.Entry(cmd_frame, width=30)
+        self.config_entry.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
+        self.config_entry.insert(0, "/Meas/ECG/200/mV")
+        self.config_entry.state(["disabled"])
         # ttk.Label(cmd_frame, text="Resource paths (space-separated)", 
         #          font=("", 8), foreground="gray").grid(row=2, column=1, sticky=tk.W, padx=5)
         
@@ -254,11 +257,44 @@ class DataloggerGUI:
         
         cmd = self.build_command("config", extra_args)
         self.run_command(cmd)
-    
+
+        self.logging_configured = True
+    #python datalogger_tool.py config -s 000455 -p "/Meas/Temp" "/Meas/ECG/125/mV"
+    # def start_logging(self):
+    #     """Start logging"""
+    #     cmd = self.build_command("start")
+    #     self.run_command(cmd)
+
     def start_logging(self):
         """Start logging"""
-        cmd = self.build_command("start")
-        self.run_command(cmd)
+        if not self.logging_configured:
+            # Run configure first, then start
+            self.log_output("\nLogging not configured. Running configure then start...\n")
+            
+            # Get config paths
+            paths = self.config_entry.get().strip().split()
+            if not paths:
+                messagebox.showwarning("Warning", "Please enter at least one resource path")
+                return
+            
+            extra_args = []
+            for path in paths:
+                extra_args.extend(["-p", path])
+            
+            # Build configure command
+            config_cmd = self.build_command("config", extra_args)
+            
+            # Run configure, then start 
+            self.run_command(config_cmd)
+            self.logging_configured = True
+
+            time.sleep(10)
+            
+            cmd = self.build_command("start")
+            self.run_command(cmd)
+        else:
+            cmd = self.build_command("start")
+            self.run_command(cmd)
     
     def stop_logging(self):
         """Stop logging"""
