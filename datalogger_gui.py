@@ -38,9 +38,9 @@ class DataloggerGUI:
                  font=("", 8), foreground="gray").grid(row=1, column=1, sticky=tk.W)
         
         # Verbose checkbox
-        # self.verbose_var = tk.BooleanVar()
-        # ttk.Checkbutton(serial_frame, text="Verbose logging", 
-        #                variable=self.verbose_var).grid(row=0, column=2, padx=(10, 0))
+        self.verbose_var = tk.BooleanVar()
+        ttk.Checkbutton(serial_frame, text="Verbose logging", 
+                       variable=self.verbose_var).grid(row=0, column=2, padx=(10, 0))
         
         # Commands Section
         cmd_frame = ttk.LabelFrame(main_frame, text="Commands", padding="10")
@@ -134,9 +134,9 @@ class DataloggerGUI:
 
         ttk.Button(erase_frame, text="Erase Memory",
                 command=self.erase_memory, width=20).grid(row=0, column=1, padx=5, sticky=tk.E)
-        # self.force_var = tk.BooleanVar()
-        # ttk.Checkbutton(erase_frame, text="Force (skip confirmation)",
-        #                 variable=self.force_var).grid(row=0, column=2, padx=5, sticky=tk.E)
+        self.force_var = tk.BooleanVar()
+        ttk.Checkbutton(erase_frame, text="Force (skip confirmation)",
+                        variable=self.force_var).grid(row=0, column=2, padx=5, sticky=tk.E)
         
         # Configure row weights for resizing
         main_frame.rowconfigure(2, weight=1)
@@ -180,8 +180,8 @@ class DataloggerGUI:
         
         cmd = [python_exe, datalogger_script]
         
-        # if self.verbose_var.get():
-        #     cmd.append("-V")
+        if self.verbose_var.get():
+            cmd.append("-V")
         
         cmd.append(command)
         
@@ -517,8 +517,8 @@ class DataloggerGUI:
             self.log_output("\nMemory erase cancelled by user\n")
             return
 
-        # Build and run erase command (no --force anymore)
-        cmd = self.build_command("erasemem")
+        # Build and run erase command
+        cmd = self.build_command("erasemem", ["--force"])
         self.run_command(cmd)
     
     def browse_output(self):
