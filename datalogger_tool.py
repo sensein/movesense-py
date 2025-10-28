@@ -243,9 +243,13 @@ def all_sensors_command(command_func, args, retrys=10):
         for serial in serials:
             print(f"Executing command for device {serial}...")
             try:
-                command_func(serial, args)
+                result = command_func(serial, args)
+                if not result:
+                    next_serials.append(serial)
             except Exception as e:
                 logging.warning(f"Error executing command for device {serial}: {e}")
+                next_serials.append(serial)
+
         retry_count += 1
         serials = next_serials
         if not serials or len(serials) == 0:
