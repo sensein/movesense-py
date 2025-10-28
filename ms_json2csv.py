@@ -108,7 +108,7 @@ def main():
                     # For last chunk, use the dt from previous chunks
                     dt = prev_dt
 
-                print(f"  Chunk {chunk_idx}: timestamp={timestamp}, samples={n}, dt={dt:.4f} ms")
+                # print(f"  Chunk {chunk_idx}: timestamp={timestamp}, samples={n}, dt={dt:.4f} ms")
                 
                 # Add each sample with interpolated timestamp
                 for i, value in enumerate(data_array):
