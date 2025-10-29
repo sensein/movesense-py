@@ -1,17 +1,16 @@
+import logging
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
+from async_tkinter_loop import async_handler, async_mainloop
 from csv2edf import csv_to_edf_plus
 from ms_json2csv import convert_json_to_csv
 import subprocess
 import threading
 import os
 import sys
-import time
-
-if sys.platform == 'win32':
-    CREATE_NO_WINDOW = 0x08000000
-else:
-    CREATE_NO_WINDOW = 0
+import io
+from contextlib import redirect_stdout
+import datalogger_tool as tool  # Import the main functionality
 
 class DataloggerGUI:
     def __init__(self, root):
@@ -159,370 +158,362 @@ class DataloggerGUI:
         self.output_text.delete(1.0, tk.END)
         self.output_text.configure(state='disabled')
     
-    def get_serial_numbers(self):
-        """Get serial numbers from entry field"""
-        serials = self.serial_entry.get().strip().split()
-        if not serials:
-            messagebox.showwarning("Warning", "Please enter at least one serial number")
+    def get_serial_number(self):
+        """Get serial number from entry field"""
+        serial = self.serial_entry.get().strip()
+        if not serial:
+            messagebox.showwarning("Warning", "Please enter a serial number")
             return None
-        return serials
+        return serial
     
-    def build_command(self, command, extra_args=None):
-        """Build command list for subprocess"""
-
-        # Determine if we're running as a bundled executable
-        if getattr(sys, 'frozen', False):
-            # Running as compiled executable
-            application_path = sys._MEIPASS  # PyInstaller extraction path
-            python_exe = "pythonw.exe"
-        else:
-            # Running as normal Python script
-            application_path = os.path.dirname(os.path.abspath(__file__))
-            python_exe = "python"
-        
-        # Build path to datalogger_tool.py
-        datalogger_script = os.path.join(application_path, "datalogger_tool.py")
-        
-        cmd = [python_exe, datalogger_script]
-        
+    @async_handler
+    async def check_status(self):
         if self.verbose_var.get():
-            cmd.append("-V")
-        
-        cmd.append(command)
-        
-        serials = self.get_serial_numbers()
-        if serials is None:
-            return None
-        
-        cmd.extend(["-s"] + serials)
-        
-        if extra_args:
-            cmd.extend(extra_args)
-        
-        return cmd
-    
-    def run_command(self, cmd):
-        """Run command in subprocess and display output"""
-        if cmd is None:
-            return
-        
-        self.log_output(f"\n{'='*60}")
-        self.log_output(f"Running: {' '.join(cmd)}")
-        self.log_output(f"{'='*60}\n")
-        self.status_var.set("Running command...")
-        
-        def execute():
-            try:
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    creationflags = CREATE_NO_WINDOW
-                )
-                
-                for line in process.stdout:
-                    self.root.after(0, self.log_output, line.rstrip())
-                
-                process.wait()
-                
-                if process.returncode == 0:
-                    self.root.after(0, self.status_var.set, "Command completed")
-                    self.root.after(0, self.log_output, "\n Command completed\n")
-                else:
-                    self.root.after(0, self.status_var.set, f"Command failed (code {process.returncode})")
-                    self.root.after(0, self.log_output, f"\n Command failed with code {process.returncode}\n")
-            
-            except Exception as e:
-                self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
-                self.root.after(0, self.status_var.set, "Error occurred")
-        
-        thread = threading.Thread(target=execute, daemon=True)
-        thread.start()
-    
-    def check_status(self):
+            logging.getLogger().setLevel(logging.DEBUG)
         """Check device status"""
-        cmd = self.build_command("status")
-        self.run_command(cmd)
-    
-    def configure_logging(self):
-        """Configure logging paths"""
-        paths = self.config_entry.get().strip().split()
-        if not paths:
-            messagebox.showwarning("Warning", "Please enter at least one resource path")
-            return
-        
-        extra_args = []
-        for path in paths:
-            extra_args.extend(["-p", path])
-        
-        cmd = self.build_command("config", extra_args)
-        self.run_command(cmd)
-
-        self.logging_configured = True
-    #python datalogger_tool.py config -s 000455 -p "/Meas/Temp" "/Meas/ECG/125/mV"
-    # def start_logging(self):
-    #     """Start logging"""
-    #     cmd = self.build_command("start")
-    #     self.run_command(cmd)
-
-    def start_logging(self):
-        """Start logging"""
-        if not self.logging_configured:
-            # Run configure first, then start
-            self.log_output("\nLogging not configured. Running configure then start...\n")
+        try:
+            serial = self.serial_entry.get().strip()
+                
+            # Capture stdout to show in GUI
+            output = io.StringIO()
+            with redirect_stdout(output):
+                status = await tool.fetch_status(serial=serial, args=None)
+                print(f"Device {serial} status: OK")
+                print(f"  Protocol version: {status.get('protocol_version', 'Unknown')}")
+                print(f"  Serial number: {status.get('serial_number', 'Unknown')}")
+                print(f"  Product name: {status.get('product_name', 'Unknown')}")
+                print(f"  App name: {status.get('app_name', 'Unknown')}")
+                print(f"  App version: {status.get('app_version', 'Unknown')}")
+                print(f"  DataLogger state: {tool.DL_STATES[status.get('dlstate', 1)]}")
             
-            # Get config paths
+            # Update GUI with captured output
+            self.root.after(0, self.log_output, output.getvalue())
+            self.root.after(0, self.status_var.set, "Status check completed")
+                
+        except Exception as e:
+            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.status_var.set, "Error occurred")
+    
+    
+    @async_handler
+    async  def configure_logging(self):
+        """Configure logging paths"""
+        if self.verbose_var.get():
+            logging.getLogger().setLevel(logging.DEBUG)
+            
+        try:
             paths = self.config_entry.get().strip().split()
             if not paths:
                 messagebox.showwarning("Warning", "Please enter at least one resource path")
                 return
+            serial = self.serial_entry.get().strip()
             
-            extra_args = []
-            for path in paths:
-                extra_args.extend(["-p", path])
+            # Capture stdout to show in GUI
+            output = io.StringIO()
+            with redirect_stdout(output):
+                await tool.configure_device(serial, paths=paths)
+                print(f"Logging configured for device {serial} with paths: {paths}")
             
-            # Build configure command
-            config_cmd = self.build_command("config", extra_args)
-            
-            # Run configure, then start 
-            self.run_command(config_cmd)
+            # Update GUI with captured output
+            self.root.after(0, self.log_output, output.getvalue())
+            self.root.after(0, self.status_var.set, "Logging configured")
             self.logging_configured = True
+                
+        except Exception as e:
+            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.status_var.set, "Error occurred")
+        
+    @async_handler
+    async def start_logging(self):
+        """Start logging"""
+        if self.verbose_var.get():
+            logging.getLogger().setLevel(logging.DEBUG)
+        try:
+            serial = self.serial_entry.get().strip()
 
-            time.sleep(10)
-            
-            cmd = self.build_command("start")
-            self.run_command(cmd)
-        else:
-            cmd = self.build_command("start")
-            self.run_command(cmd)
-    
-    def stop_logging(self):
+            if not self.logging_configured:
+                self.log_output("\nLogging not configured. Running configure then start...\n")
+                
+                # Get config paths
+                paths = self.config_entry.get().strip().split()
+                if not paths:
+                    messagebox.showwarning("Warning", "Please enter at least one resource path")
+                    return
+                
+                # Capture stdout to show in GUI
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    # Configure logging
+                    await tool.configure_device(serial, paths=paths)
+                    self.logging_configured = True
+                    # Start logging immediately after configuration
+                    await tool.start_logging(serial, args=None)
+                
+                # Update GUI with captured output
+                self.root.after(0, self.log_output, output.getvalue())
+                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}\n")
+                self.root.after(0, self.status_var.set, "Logging started")
+            else:
+                self.root.after(0, self.log_output, f"\nStarting logging on device {serial}...\n")
+                # Just start logging if already configured
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    await tool.start_logging(serial, args=None)
+                self.root.after(0, self.log_output, output.getvalue())
+                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}\n")
+                self.root.after(0, self.status_var.set, "Logging started")
+                
+        except Exception as e:
+            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.status_var.set, "Error occurred")
+
+    @async_handler
+    async def stop_logging(self):
         """Stop logging"""
-        cmd = self.build_command("stop")
-        self.run_command(cmd)
-    
-    def fetch_data(self):
+        if self.verbose_var.get():
+            logging.getLogger().setLevel(logging.DEBUG)
+        try:
+            # if not self.datalogger:
+            #     self.root.after(0, self.log_output, "\nError: No active logging session\n")
+            #     return
+            
+            # Capture stdout to show in GUI
+            output = io.StringIO()
+            serial = self.serial_entry.get().strip()
+            self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...\n")
+            with redirect_stdout(output):
+                await tool.stop_logging(serial=serial, args=None)
+            
+            # Update GUI with captured output
+            self.root.after(0, self.log_output, output.getvalue())
+            self.root.after(0, self.log_output, f"\nLogging stopped successfully on device {serial}\n")
+            self.root.after(0, self.status_var.set, "Logging stopped")
+                
+        except Exception as e:
+            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.status_var.set, "Error occurred")
+        
+    @async_handler
+    async def fetch_data(self):
         """Fetch data from devices"""
+        if self.verbose_var.get():
+            logging.getLogger().setLevel(logging.DEBUG)
+
         output_dir = self.output_entry.get().strip()
         if not output_dir:
             messagebox.showwarning("Warning", "Please specify an output directory")
             return
-        
-        extra_args = ["-o", output_dir]
-        cmd = self.build_command("fetch", extra_args)
-        
-        if cmd is None:
-            return
-        
-        self.log_output(f"\n{'='*60}")
-        self.log_output(f"Running: {' '.join(cmd)}")
-        self.log_output(f"{'='*60}\n")
-        self.status_var.set("Fetching data...")
-        
-        def execute():
-            try:
+
+        try:
+            serial = self.serial_entry.get().strip()
+
+            # Capture stdout to show in GUI
+            output = io.StringIO()
+            with redirect_stdout(output):
                 # Step 1: Fetch data
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    creationflags=CREATE_NO_WINDOW
-                )
+                await tool.fetch_data(serial=serial, args=None)
                 
-                for line in process.stdout:
-                    self.root.after(0, self.log_output, line.rstrip())
-                
-                process.wait()
-                
-                if process.returncode == 0:
-                    self.root.after(0, self.log_output, "\n Fetch completed.\n")
-                
-                else:
-                    self.root.after(0, self.status_var.set, f"Fetch failed (code {process.returncode})")
-                    self.root.after(0, self.log_output, f"\n Fetch failed with code {process.returncode}\n")
+            # Update GUI with fetch output
+            self.root.after(0, self.log_output, output.getvalue())
+            self.root.after(0, self.log_output, "\n Fetch completed.\n")
+        
+            # Step 2: Convert SBEM to JSON
+            self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---\n")
+            self.root.after(0, self.status_var.set, "Converting SBEM to JSON...")
+
+            # Create sbem-files folder if it doesn't exist
+            sbem_folder = os.path.join(output_dir, "sbem-files")
+            if not os.path.exists(sbem_folder):
+                os.makedirs(sbem_folder)
+                self.root.after(0, self.log_output, f"Created folder: {sbem_folder}\n")
             
-                # Step 2: Convert SBEM to JSON
-                self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---\n")
-                self.root.after(0, self.status_var.set, "Converting SBEM to JSON...")
+            # Find all .sbem files in output directory
+            sbem_files = []
+            for root_dir, dirs, files in os.walk(output_dir):
+                if 'sbem-files' in root_dir:
+                    continue
+                for file in files:
+                    if file.endswith('.sbem'):
+                        sbem_files.append(os.path.join(root_dir, file))
+            
+            if not sbem_files:
+                self.root.after(0, self.log_output, "No SBEM files found to convert\n")
+            else:
+                for sbem_file in sbem_files:
+                    self.root.after(0, self.log_output, f"Converting: {sbem_file}\n")
 
-                # Create sbem-files folder if it doesn't exist
-                sbem_folder = os.path.join(output_dir, "sbem-files")
-                if not os.path.exists(sbem_folder):
-                    os.makedirs(sbem_folder)
-                    self.root.after(0, self.log_output, f"Created folder: {sbem_folder}\n")
-                
-                # Find all .sbem files in output directory
-                sbem_files = []
-                for root_dir, dirs, files in os.walk(output_dir):
-                    if 'sbem-files' in root_dir:
-                        continue
-                    for file in files:
-                        if file.endswith('.sbem'):
-                            sbem_files.append(os.path.join(root_dir, file))
-                
-                if not sbem_files:
-                    self.root.after(0, self.log_output, "No SBEM files found to convert\n")
-                else:
-                    for sbem_file in sbem_files:
-                        self.root.after(0, self.log_output, f"Converting: {sbem_file}\n")
-
-                        # Get directory and filename
-                        original_dir = os.path.dirname(sbem_file)
-                        sbem_filename = os.path.basename(sbem_file)
-                        
-                        # Create output JSON filename in the original location
-                        json_filename = os.path.splitext(sbem_filename)[0] + '.json'
-                        json_file = os.path.join(original_dir, json_filename)
+                    # Get directory and filename
+                    original_dir = os.path.dirname(sbem_file)
+                    sbem_filename = os.path.basename(sbem_file)
+                    
+                    # Create output JSON filename in the original location
+                    json_filename = os.path.splitext(sbem_filename)[0] + '.json'
+                    json_file = os.path.join(original_dir, json_filename)
 
                         # For sbem2json.exe
-                        if getattr(sys, 'frozen', False):
-                            application_path = sys._MEIPASS
-                        else:
-                            application_path = os.path.dirname(os.path.abspath(__file__))
+                    if getattr(sys, 'frozen', False):
+                        application_path = sys._MEIPASS
+                    else:
+                        application_path = os.path.dirname(os.path.abspath(__file__))
 
-                        sbem2json_exe = os.path.join(application_path, "sbem2json.exe")
+                    sbem2json_exe = os.path.join(application_path, "sbem2json.exe")
+                    
+                    # Call sbem2json.exe - convert from original location
+                    converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", json_file]
+                    
+                    conv_process = subprocess.Popen(
+                        converter_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True
+                    )
+                    
+                    conv_output, _ = conv_process.communicate()
+                    if conv_output:
+                        self.root.after(0, self.log_output, conv_output)
+                    
+                    if conv_process.returncode != 0:
+                        self.root.after(0, self.log_output, 
+                            f"Warning: Conversion failed for {sbem_filename}\n")
+                    else:
+                        self.root.after(0, self.log_output, 
+                            f"Created: {json_file}\n")
                         
-                        # Call sbem2json.exe - convert from original location
-                        converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", json_file]
-                        
-                        conv_process = subprocess.Popen(
-                            converter_cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            creationflags=CREATE_NO_WINDOW
-                        )
-                        
-                        conv_output, _ = conv_process.communicate()
-                        if conv_output:
-                            self.root.after(0, self.log_output, conv_output)
-                        
-                        if conv_process.returncode != 0:
-                            self.root.after(0, self.log_output, 
-                                f"Warning: Conversion failed for {sbem_filename}\n")
-                        else:
-                            self.root.after(0, self.log_output, 
-                                f"Created: {json_file}\n")
-                            
-                            # Move SBEM file to sbem-files folder AFTER successful conversion
-                            new_sbem_path = os.path.join(sbem_folder, sbem_filename)
-                            try:
-                                os.rename(sbem_file, new_sbem_path)
-                                self.root.after(0, self.log_output, f"Moved SBEM to: {new_sbem_path}\n")
-                            except Exception as e:
-                                self.root.after(0, self.log_output, f"Warning: Could not move SBEM file: {str(e)}\n")
-                
-                # Step 3: Convert JSON to CSV
-                self.root.after(0, self.log_output, "\n--- Converting JSON to CSV ---\n")
-                self.root.after(0, self.status_var.set, "Converting JSON to CSV...")
-                
-                # Find all .json files in output directory
-                json_files = []
-                for root_dir, dirs, files in os.walk(output_dir):
-                    for file in files:
-                        if file.endswith('.json'):
-                            json_path = os.path.join(root_dir, file)
-                            # Check if corresponding CSV already exists
-                            csv_path = os.path.splitext(json_path)[0] + '.csv'
-                            if os.path.exists(csv_path):
-                                self.root.after(0, self.log_output, 
-                                    f"Skipping {file} - CSV already exists\n")
-                            else:
-                                json_files.append(json_path)
-                
-                if not json_files:
-                    self.root.after(0, self.log_output, "No JSON files found to convert\n")
-                else:
-                    for json_file in json_files:
-                        self.root.after(0, self.log_output, f"Converting: {json_file}\n")
-                        
-                        # Create output CSV filename (same name, different extension)
-                        csv_file = os.path.splitext(json_file)[0] + '.csv'
-
-                        try: 
-                            convert_json_to_csv(input_file=json_file, 
-                                      output_file=csv_file)
-
-                            self.root.after(0, self.log_output, f"Created: {csv_file}\n")
-
+                        # Move SBEM file to sbem-files folder AFTER successful conversion
+                        new_sbem_path = os.path.join(sbem_folder, sbem_filename)
+                        try:
+                            os.rename(sbem_file, new_sbem_path)
+                            self.root.after(0, self.log_output, f"Moved SBEM to: {new_sbem_path}\n")
                         except Exception as e:
-                            self.root.after(0, self.log_output, 
-                                f"Warning: CSV conversion failed for {json_file}: {str(e)}\n")
-                            
-                # Step 4: Convert CSV to EDF
-                self.root.after(0, self.log_output, "\n--- Converting CSV to EDF ---\n")
-                self.root.after(0, self.status_var.set, "Converting CSV to EDF...")
-
-                # Find ECG-related CSV files in output directory
-                csv_files = []
-                for root_dir, dirs, files in os.walk(output_dir):
-                    if 'venv' in root_dir or 'site-packages' in root_dir:
-                        continue  # Skip virtual environment and site-packages directories
-                    for file in files:
-                        if file.endswith('.csv') and ('log_' in file.lower() or 'ecg' in file.lower()):
-                            csv_path = os.path.join(root_dir, file)
-                            # Check if corresponding EDF already exists
-                            edf_path = os.path.splitext(csv_path)[0] + '.edf'
-                            if os.path.exists(edf_path):
-                                self.root.after(0, self.log_output, 
-                                    f"Skipping {file} - EDF already exists\n")
-                            else:
-                                csv_files.append(csv_path)
-
-                if not csv_files:
-                    self.root.after(0, self.log_output, "No CSV files found to convert\n")
-                else:
-                    for csv_file in csv_files:
-                        self.root.after(0, self.log_output, f"Converting: {csv_file}\n")
-                        
-                        # Create output EDF filename (same name, different extension)
-                        edf_file = os.path.splitext(csv_file)[0] + '.edf'
-
-                        try: 
-                            csv_to_edf_plus(csv_filename=csv_file, 
-                                      edf_filename=edf_file, 
-                                      sampling_freq=None, 
-                                      unit='mV', 
-                                      scale_factor=1)
-
-                            self.root.after(0, self.log_output, f"Created: {edf_file}\n")
-
-                        except Exception as e:
-                            self.root.after(0, self.log_output, 
-                                f"Warning: EDF conversion failed for {csv_file}: {str(e)}\n")
-
-                # All done
-                self.root.after(0, self.status_var.set, "All conversions completed.")
-                self.root.after(0, self.log_output, "\n All conversions completed.\n")
-                
-                # All done
-                self.root.after(0, self.status_var.set, "All conversions completed.")
-                self.root.after(0, self.log_output, "\n All conversions completed.\n")
+                            self.root.after(0, self.log_output, f"Warning: Could not move SBEM file: {str(e)}\n")
             
-            except Exception as e:
-                self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
-                self.root.after(0, self.status_var.set, "Error occurred")
-        
-        thread = threading.Thread(target=execute, daemon=True)
-        thread.start()
-    
-    def erase_memory(self):
-        """Erase device memory"""
-        result = messagebox.askyesno(
-            "Confirm Erase",
-            "Are you sure you want to erase all logged data?\nThis action cannot be undone!"
-        )
-        if not result:
-            self.log_output("\nMemory erase cancelled by user\n")
-            return
+            # Step 3: Convert JSON to CSV
+            self.root.after(0, self.log_output, "\n--- Converting JSON to CSV ---\n")
+            self.root.after(0, self.status_var.set, "Converting JSON to CSV...")
+            
+            # Find all .json files in output directory
+            json_files = []
+            for root_dir, dirs, files in os.walk(output_dir):
+                for file in files:
+                    if file.endswith('.json'):
+                        json_path = os.path.join(root_dir, file)
+                        # Check if corresponding CSV already exists
+                        csv_path = os.path.splitext(json_path)[0] + '.csv'
+                        if os.path.exists(csv_path):
+                            self.root.after(0, self.log_output, 
+                                f"Skipping {file} - CSV already exists\n")
+                        else:
+                            json_files.append(json_path)
+            
+            if not json_files:
+                self.root.after(0, self.log_output, "No JSON files found to convert\n")
+            else:
+                for json_file in json_files:
+                    self.root.after(0, self.log_output, f"Converting: {json_file}\n")
+                    
+                    # Create output CSV filename (same name, different extension)
+                    csv_file = os.path.splitext(json_file)[0] + '.csv'
 
-        # Build and run erase command
-        cmd = self.build_command("erasemem", ["--force"])
-        self.run_command(cmd)
+                    try: 
+                        convert_json_to_csv(input_file=json_file, 
+                                    output_file=csv_file)
+
+                        self.root.after(0, self.log_output, f"Created: {csv_file}\n")
+
+                    except Exception as e:
+                        self.root.after(0, self.log_output, 
+                            f"Warning: CSV conversion failed for {json_file}: {str(e)}\n")
+                        
+            # Step 4: Convert CSV to EDF
+            self.root.after(0, self.log_output, "\n--- Converting CSV to EDF ---\n")
+            self.root.after(0, self.status_var.set, "Converting CSV to EDF...")
+
+            # Find ECG-related CSV files in output directory
+            csv_files = []
+            for root_dir, dirs, files in os.walk(output_dir):
+                if 'venv' in root_dir or 'site-packages' in root_dir:
+                    continue  # Skip virtual environment and site-packages directories
+                for file in files:
+                    if file.endswith('.csv') and ('log_' in file.lower() or 'ecg' in file.lower()):
+                        csv_path = os.path.join(root_dir, file)
+                        # Check if corresponding EDF already exists
+                        edf_path = os.path.splitext(csv_path)[0] + '.edf'
+                        if os.path.exists(edf_path):
+                            self.root.after(0, self.log_output, 
+                                f"Skipping {file} - EDF already exists\n")
+                        else:
+                            csv_files.append(csv_path)
+
+            if not csv_files:
+                self.root.after(0, self.log_output, "No CSV files found to convert\n")
+            else:
+                for csv_file in csv_files:
+                    self.root.after(0, self.log_output, f"Converting: {csv_file}\n")
+                    
+                    # Create output EDF filename (same name, different extension)
+                    edf_file = os.path.splitext(csv_file)[0] + '.edf'
+
+                    try: 
+                        csv_to_edf_plus(csv_filename=csv_file, 
+                                    edf_filename=edf_file, 
+                                    sampling_freq=None, 
+                                    unit='mV', 
+                                    scale_factor=1)
+
+                        self.root.after(0, self.log_output, f"Created: {edf_file}\n")
+
+                    except Exception as e:
+                        self.root.after(0, self.log_output, 
+                            f"Warning: EDF conversion failed for {csv_file}: {str(e)}\n")
+
+            # All done
+            self.root.after(0, self.status_var.set, "All conversions completed.")
+            self.root.after(0, self.log_output, "\n All conversions completed.\n")
+        
+        except Exception as e:
+            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.status_var.set, "Error occurred")
+    
+    @async_handler
+    async def erase_memory(self):
+        """Erase device memory"""
+        if self.verbose_var.get():
+            logging.getLogger().setLevel(logging.DEBUG)
+        if not self.force_var.get():
+            result = messagebox.askyesno(
+                "Confirm Erase",
+                "Are you sure you want to erase all logged data?\nThis action cannot be undone!"
+            )
+            if not result:
+                self.log_output("\nMemory erase cancelled by user\n")
+                return
+        try:
+            # Get serial number first
+            serial = self.serial_entry.get().strip()
+            if not serial:
+                self.root.after(0, lambda: messagebox.showerror("Error", "Please enter a serial number"))
+                return
+            
+            # Update status
+            self.root.after(0, self.status_var.set, "Connecting to device...")
+            self.root.after(0, self.log_output, f"\nAttempting to connect to device {serial}...\n")
+            
+            # Always use force=True as required by the device protocol
+            output = io.StringIO()
+            with redirect_stdout(output):
+                await tool.erase_memory(serial=serial)
+            
+            # Update GUI with captured output
+            self.root.after(0, self.log_output, output.getvalue())
+            self.root.after(0, self.log_output, "\nMemory erased successfully\n")
+            self.root.after(0, self.status_var.set, "Memory erased")
+                
+        except Exception as e:
+            error_msg = str(e)
+            self.root.after(0, self.log_output, f"\nError: {error_msg}\n")
+            self.root.after(0, self.status_var.set, "Error occurred")
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to erase memory: {error_msg}"))
+
     
     def browse_output(self):
         """Browse for output directory"""
@@ -531,10 +522,7 @@ class DataloggerGUI:
             self.output_entry.delete(0, tk.END)
             self.output_entry.insert(0, directory)
 
-def main():
-    root = tk.Tk()
-    app = DataloggerGUI(root)
-    root.mainloop()
+root = tk.Tk()
+app = DataloggerGUI(root)
+async_mainloop(root)
 
-if __name__ == "__main__":
-    main()
