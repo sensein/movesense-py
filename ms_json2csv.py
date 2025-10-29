@@ -6,13 +6,17 @@ from datetime import datetime
 
 ECG_LSB_TO_MV = 0.000381469726563
 
-def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: python {sys.argv[0]} <input_json_file> <output_csv_file>")
-        sys.exit(1)
-
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
+def convert_json_to_csv(input_file, output_file):
+    """
+    Convert a JSON file containing sensor data to CSV format.
+    
+    Args:
+        input_file (str): Path to the input JSON file
+        output_file (str): Path to the output CSV file
+        
+    Returns:
+        bool: True if conversion was successful, False otherwise
+    """
 
     with open(input_file, 'r') as f:
         print("Parsing JSON...")
@@ -144,6 +148,14 @@ def main():
             print(f"Successfully saved {len(all_data)} samples")
             print(f"\n CSV file saved successfully to: {os.path.abspath(output_file)}")
 
+def main():
+    if len(sys.argv) < 3:
+        print(f"Usage: python {sys.argv[0]} <input_json_file> <output_csv_file>")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+    convert_json_to_csv(input_file, output_file)
+
 if __name__ == "__main__":
     main()
-

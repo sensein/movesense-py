@@ -6,7 +6,7 @@ from datetime import datetime
 import sys
 import os
 
-def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='mV', scale_factor=1000.0):
+def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='mV', scale_factor=1):
     """
     Convert a CSV file with single ECG channel data to EDF+ format.
     
@@ -28,10 +28,21 @@ def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='m
 
     # Read the CSV file - only first two columns
     print(f"Reading CSV file: {csv_filename}")
-    df = pd.read_csv(csv_filename, usecols=[0, 1])
-    
-    # Rename columns to standard names
-    df.columns = ['Timestamp_ms', 'ECG']
+    try:
+        # First attempt to read with headers
+        df = pd.read_csv(csv_filename)
+        if len(df.columns) >= 2:
+            # Check if there are metadata rows (like "Relative Time:" and "UTC Time:")
+            if df.iloc[0].astype(str).str.contains('Time:').any():
+                # Skip the first row if it contains metadata
+                df = pd.read_csv(csv_filename, skiprows=1, names=['Timestamp_ms', 'ECG'])
+            else:
+                # Use only first two columns and rename them
+                df = df.iloc[:, 0:2]
+                df.columns = ['Timestamp_ms', 'ECG']
+    except Exception as e:
+        print(f"Error reading CSV: {str(e)}")
+        raise
     
     # Remove any rows with NaN values
     df = df.dropna()
@@ -40,18 +51,38 @@ def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='m
     
     # Calculate sampling frequency based on timestamps if not provided
     if sampling_freq is None:
-        timestamps = df['Timestamp_ms'].values
-        time_diffs = np.diff(timestamps)
-        mean_interval = np.mean(time_diffs)
-        sampling_freq_raw = 1000.0 / mean_interval  # Timestamps in ms
-        sampling_freq = round(sampling_freq_raw)
-        print(f"Estimated sampling frequency: {sampling_freq_raw:.2f} Hz (mean interval: {mean_interval:.2f} ms)")
-        print(f"Rounded sampling frequency: {sampling_freq} Hz")
+        try:
+            # Handle both string and numeric timestamp formats
+            if df['Timestamp_ms'].dtype == object:  # If timestamps are strings
+                df['Timestamp_ms'] = pd.to_numeric(df['Timestamp_ms'].str.replace('"', '').str.strip(), errors='coerce')
+            else:  # If timestamps are already numeric
+                df['Timestamp_ms'] = pd.to_numeric(df['Timestamp_ms'], errors='coerce')
+            
+            timestamps = df['Timestamp_ms'].values
+            time_diffs = np.diff(timestamps)
+            mean_interval = np.mean(time_diffs)
+            sampling_freq_raw = 1000.0 / mean_interval  # Timestamps in ms
+            sampling_freq = round(sampling_freq_raw)
+            print(f"Estimated sampling frequency: {sampling_freq_raw:.2f} Hz (mean interval: {mean_interval:.2f} ms)")
+            print(f"Rounded sampling frequency: {sampling_freq} Hz")
+        except Exception as e:
+            print(f"Warning: Could not calculate sampling frequency from timestamps: {str(e)}")
+            print("Using default sampling frequency of 200 Hz")
+            sampling_freq = 200  # Default to 200 Hz if we can't calculate it
     else:
         print(f"Using provided sampling frequency: {sampling_freq:.2f} Hz")
 
-    # Apply scaling factor
-    ecg_data = df['ECG'].values.astype(np.float64) * scale_factor
+    # Convert ECG values to numeric and apply scaling factor
+    try:
+        # Handle both string and numeric input formats
+        if df['ECG'].dtype == object:  # If the data is string type
+            df['ECG'] = pd.to_numeric(df['ECG'].str.replace('"', '').str.strip(), errors='coerce')
+        else:  # If the data is already numeric
+            df['ECG'] = pd.to_numeric(df['ECG'], errors='coerce')
+            
+        ecg_data = df['ECG'].values.astype(np.float64) * scale_factor
+    except Exception as e:
+        raise ValueError(f"Error converting ECG values to numeric format: {str(e)}")
     
     # Show statistics
     data_min = np.min(ecg_data)
