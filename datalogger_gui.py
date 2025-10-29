@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
+from csv2edf import csv_to_edf_plus
+from ms_json2csv import convert_json_to_csv
 import subprocess
 import threading
 import os
@@ -361,20 +363,6 @@ class DataloggerGUI:
                     for file in files:
                         if file.endswith('.sbem'):
                             sbem_files.append(os.path.join(root_dir, file))
-
-                            # sbem_path = os.path.join(root_dir, file)
-                            # # Check if this file already exists in sbem-files folder
-                            # if os.path.exists(os.path.join(sbem_folder, file)):
-                            #     self.root.after(0, self.log_output, 
-                            #         f"Skipping {file} - already processed (found in sbem-files)\n")
-                            #     # Remove the duplicate from the main folder
-                            #     try:
-                            #         os.remove(sbem_path)
-                            #         self.root.after(0, self.log_output, f"Removed duplicate: {sbem_path}\n")
-                            #     except Exception as e:
-                            #         self.root.after(0, self.log_output, f"Warning: Could not remove duplicate: {str(e)}\n")
-                            # else:
-                            #     sbem_files.append(sbem_path)
                 
                 if not sbem_files:
                     self.root.after(0, self.log_output, "No SBEM files found to convert\n")
@@ -455,38 +443,27 @@ class DataloggerGUI:
                         # Create output CSV filename (same name, different extension)
                         csv_file = os.path.splitext(json_file)[0] + '.csv'
 
-                        ms_json2csv_script = os.path.join(application_path, "ms_json2csv.py")
-                        # Call your Python script with input and output files
-                        csv_cmd = ["python", ms_json2csv_script, json_file, csv_file]
-                        
-                        csv_process = subprocess.Popen(
-                            csv_cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            creationflags=CREATE_NO_WINDOW
-                        )
-                        
-                        csv_output, _ = csv_process.communicate()
-                        if csv_output:
-                            self.root.after(0, self.log_output, csv_output)
-                        
-                        if csv_process.returncode != 0:
+                        try: 
+                            convert_json_to_csv(input_file=json_file, 
+                                      output_file=csv_file)
+
+                            self.root.after(0, self.log_output, f"Created: {csv_file}\n")
+
+                        except Exception as e:
                             self.root.after(0, self.log_output, 
-                                f"Warning: CSV conversion failed for {json_file}\n")
-                        else:
-                            self.root.after(0, self.log_output, 
-                                f"Created: {csv_file}\n")
+                                f"Warning: CSV conversion failed for {json_file}: {str(e)}\n")
                             
                 # Step 4: Convert CSV to EDF
                 self.root.after(0, self.log_output, "\n--- Converting CSV to EDF ---\n")
                 self.root.after(0, self.status_var.set, "Converting CSV to EDF...")
 
-                # Find all .csv files in output directory
+                # Find ECG-related CSV files in output directory
                 csv_files = []
                 for root_dir, dirs, files in os.walk(output_dir):
+                    if 'venv' in root_dir or 'site-packages' in root_dir:
+                        continue  # Skip virtual environment and site-packages directories
                     for file in files:
-                        if file.endswith('.csv'):
+                        if file.endswith('.csv') and ('log_' in file.lower() or 'ecg' in file.lower()):
                             csv_path = os.path.join(root_dir, file)
                             # Check if corresponding EDF already exists
                             edf_path = os.path.splitext(csv_path)[0] + '.edf'
@@ -505,28 +482,18 @@ class DataloggerGUI:
                         # Create output EDF filename (same name, different extension)
                         edf_file = os.path.splitext(csv_file)[0] + '.edf'
 
-                        csv2edf_script = os.path.join(application_path, "csv2edf.py")
-                        # Call csv2edf.py with just the input file (auto-detect frequency, auto-scale)
-                        edf_cmd = ["python", csv2edf_script, csv_file]
-                        
-                        edf_process = subprocess.Popen(
-                            edf_cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            creationflags=CREATE_NO_WINDOW
-                        )
-                        
-                        edf_output, _ = edf_process.communicate()
-                        if edf_output:
-                            self.root.after(0, self.log_output, edf_output)
-                        
-                        if edf_process.returncode != 0:
+                        try: 
+                            csv_to_edf_plus(csv_filename=csv_file, 
+                                      edf_filename=edf_file, 
+                                      sampling_freq=None, 
+                                      unit='mV', 
+                                      scale_factor=1)
+
+                            self.root.after(0, self.log_output, f"Created: {edf_file}\n")
+
+                        except Exception as e:
                             self.root.after(0, self.log_output, 
-                                f"Warning: EDF conversion failed for {csv_file}\n")
-                        else:
-                            self.root.after(0, self.log_output, 
-                                f"Created: {edf_file}\n")
+                                f"Warning: EDF conversion failed for {csv_file}: {str(e)}\n")
 
                 # All done
                 self.root.after(0, self.status_var.set, "All conversions completed.")
