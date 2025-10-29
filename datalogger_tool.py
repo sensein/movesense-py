@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime
+import io
 import sys
 import asyncio
 import logging
@@ -15,19 +16,20 @@ async def fetch_status(serial, args):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
-async def configure_device(serial, args):
+async def configure_device(serial, args = None, paths = None):
     """Configure a specific device."""
     try:
         async with SensorCommand(serial) as sensor:
             # Use config file if provided
             config_data = bytearray()  # Default empty config
 
-            if hasattr(args, 'path') and args.path:
+            if not paths and hasattr(args, 'path') and args.path:
                 paths = args.path
-                paths.append("/Time/Detailed")
-                for path in paths:
-                    logging.info(f"- Adding path {path} to DataLogger configuration")
-                    config_data.extend(path.encode('utf-8') + b'\0')
+        
+            paths.append("/Time/Detailed")
+            for path in paths:
+                logging.info(f"- Adding path {path} to DataLogger configuration")
+                config_data.extend(path.encode('utf-8') + b'\0')
 
             result = await sensor.configure_device(config_data)
             return result
