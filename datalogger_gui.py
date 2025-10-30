@@ -100,7 +100,9 @@ class DataloggerGUI:
         ttk.Label(fetch_frame, text="Path:").pack(side=tk.LEFT, padx=(0, 5))
         self.output_entry = ttk.Entry(fetch_frame)
         self.output_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.output_entry.insert(0, "./data")
+        #app_path = os.path.dirname(os.path.abspath(__file__))
+        app_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.output_entry.insert(0, app_path)
         ttk.Button(fetch_frame, text="Browse...",
                 command=self.browse_output).pack(side=tk.LEFT, padx=(5, 0))
         
@@ -145,10 +147,13 @@ class DataloggerGUI:
         # Configure row weights for resizing
         main_frame.rowconfigure(2, weight=1)
     
-    def log_output(self, message):
+    def log_output(self, message, newline=True):
         """Add message to output text widget"""
         self.output_text.configure(state='normal')
-        self.output_text.insert(tk.END, message + "\n")
+        if newline:
+            self.output_text.insert(tk.END, message + "\n")
+        else:
+            self.output_text.insert(tk.END, message)
         self.output_text.see(tk.END)
         self.output_text.configure(state='disabled')
     
@@ -166,6 +171,19 @@ class DataloggerGUI:
             return None
         return serial
     
+    def logging_data(self):
+        """Print dots to show logging is active"""
+        if hasattr(self, 'logging_active') and self.logging_active:
+            # Alternate between two different marks
+            if not hasattr(self, 'logging_counter'):
+                self.logging_counter = 0
+            
+            mark = "*" if self.logging_counter % 2 == 0 else "."
+            self.log_output(mark, newline=False)
+            self.logging_counter += 1
+            
+            self.root.after(2000, self.logging_data)
+    
     @async_handler
     async def check_status(self):
         if self.verbose_var.get():
@@ -173,12 +191,15 @@ class DataloggerGUI:
         """Check device status"""
         try:
             serial = self.serial_entry.get().strip()
+            
+            self.root.after(0, self.log_output, "Connecting sensor and loading status...")
+            self.root.after(0, self.status_var.set, "Connecting sensor and loading status.")
                 
             # Capture stdout to show in GUI
             output = io.StringIO()
             with redirect_stdout(output):
                 status = await tool.fetch_status(serial=serial, args=None)
-                print(f"Device {serial} status: OK")
+                print(f"Device {serial} status:")
                 print(f"  Protocol version: {status.get('protocol_version', 'Unknown')}")
                 print(f"  Serial number: {status.get('serial_number', 'Unknown')}")
                 print(f"  Product name: {status.get('product_name', 'Unknown')}")
@@ -188,7 +209,7 @@ class DataloggerGUI:
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.status_var.set, "Status check completed")
+            self.root.after(0, self.status_var.set, "Status check completed.")
                 
         except Exception as e:
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
@@ -203,6 +224,10 @@ class DataloggerGUI:
             
         try:
             paths = self.config_entry.get().strip().split()
+
+            self.root.after(0, self.log_output, "Configure logging started...")
+            self.root.after(0, self.status_var.set, "Configure logging started.")
+
             if not paths:
                 messagebox.showwarning("Warning", "Please enter at least one resource path")
                 return
@@ -232,7 +257,8 @@ class DataloggerGUI:
             serial = self.serial_entry.get().strip()
 
             if not self.logging_configured:
-                self.log_output("\nLogging not configured. Running configure then start...\n")
+                self.log_output("\nLogging not configured — configuring and starting logging...\n")
+                self.root.after(0, self.status_var.set, "Configuring and starting logging.")
                 
                 # Get config paths
                 paths = self.config_entry.get().strip().split()
@@ -251,8 +277,13 @@ class DataloggerGUI:
                 
                 # Update GUI with captured output
                 self.root.after(0, self.log_output, output.getvalue())
-                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}\n")
-                self.root.after(0, self.status_var.set, "Logging started")
+                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}. Recording data...\n")
+                self.root.after(0, self.status_var.set, "Logging started.")
+
+                # Set logging active flag 
+                self.logging_active = True
+                self.root.after(2000, self.logging_data)
+
             else:
                 self.root.after(0, self.log_output, f"\nStarting logging on device {serial}...\n")
                 # Just start logging if already configured
@@ -260,8 +291,12 @@ class DataloggerGUI:
                 with redirect_stdout(output):
                     await tool.start_logging(serial, args=None)
                 self.root.after(0, self.log_output, output.getvalue())
-                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}\n")
-                self.root.after(0, self.status_var.set, "Logging started")
+                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}. Recording data...\n")
+                self.root.after(0, self.status_var.set, "Logging started.")
+
+                # Set logging active flag 
+                self.logging_active = True
+                self.root.after(2000, self.logging_data)
                 
         except Exception as e:
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
@@ -273,14 +308,13 @@ class DataloggerGUI:
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
         try:
-            # if not self.datalogger:
-            #     self.root.after(0, self.log_output, "\nError: No active logging session\n")
-            #     return
-            
+            # Stop the dots
+            self.logging_active = False
             # Capture stdout to show in GUI
             output = io.StringIO()
             serial = self.serial_entry.get().strip()
             self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...\n")
+            self.root.after(0, self.status_var.set, "Stopping logging.")
             with redirect_stdout(output):
                 await tool.stop_logging(serial=serial, args=None)
             
@@ -290,6 +324,7 @@ class DataloggerGUI:
             self.root.after(0, self.status_var.set, "Logging stopped")
                 
         except Exception as e:
+            self.logging_active = False
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
         
@@ -306,6 +341,10 @@ class DataloggerGUI:
 
         try:
             serial = self.serial_entry.get().strip()
+
+            self.root.after(0, self.log_output, f"Current working directory: {os.getcwd()}\n")
+            self.root.after(0, self.log_output, f"\nLoading data from device {serial}.\n")
+            self.root.after(0, self.status_var.set, "Loading data from device.")
 
             # Capture stdout to show in GUI
             output = io.StringIO()
@@ -337,7 +376,7 @@ class DataloggerGUI:
                         sbem_files.append(os.path.join(root_dir, file))
             
             if not sbem_files:
-                self.root.after(0, self.log_output, "No SBEM files found to convert\n")
+                self.root.after(0, self.log_output, "No SBEM files found to convert.\n")
             else:
                 for sbem_file in sbem_files:
                     self.root.after(0, self.log_output, f"Converting: {sbem_file}\n")
@@ -382,8 +421,16 @@ class DataloggerGUI:
                         # Move SBEM file to sbem-files folder AFTER successful conversion
                         new_sbem_path = os.path.join(sbem_folder, sbem_filename)
                         try:
-                            os.rename(sbem_file, new_sbem_path)
-                            self.root.after(0, self.log_output, f"Moved SBEM to: {new_sbem_path}\n")
+                            if os.path.exists(new_sbem_path):
+                                # Delete the sbem file since we already have it archived
+                                os.remove(sbem_file)
+                                self.root.after(0, self.log_output, 
+                                    f"Removed SBEM (already archived): {sbem_filename}\n")
+                            else:
+                                # Move to sbem-files folder
+                                os.rename(sbem_file, new_sbem_path)
+                                self.root.after(0, self.log_output, 
+                                    f"Moved SBEM to: {new_sbem_path}\n")
                         except Exception as e:
                             self.root.after(0, self.log_output, f"Warning: Could not move SBEM file: {str(e)}\n")
             
@@ -394,6 +441,9 @@ class DataloggerGUI:
             # Find all .json files in output directory
             json_files = []
             for root_dir, dirs, files in os.walk(output_dir):
+                # Skip virtual environment and site-packages directories
+                if 'venv' in root_dir or '.venv' in root_dir or 'site-packages' in root_dir:
+                    continue
                 for file in files:
                     if file.endswith('.json'):
                         json_path = os.path.join(root_dir, file)
@@ -497,6 +547,8 @@ class DataloggerGUI:
             # Update status
             self.root.after(0, self.status_var.set, "Connecting to device...")
             self.root.after(0, self.log_output, f"\nAttempting to connect to device {serial}...\n")
+            self.root.after(0, self.log_output, f"\nErasing memory on device {serial}...\n")
+            self.root.after(0, self.status_var.set, "Erasing memory on device.")
             
             # Always use force=True as required by the device protocol
             output = io.StringIO()
