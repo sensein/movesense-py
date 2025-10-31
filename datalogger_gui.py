@@ -465,43 +465,6 @@ class DataloggerGUI:
                     # Create output JSON filename in the original location
                     json_filename = os.path.splitext(sbem_filename)[0] + '.json'
                     json_file = os.path.join(original_dir, json_filename)
-                    
-                    # Try to extract UTC time from temporary JSON conversion first
-                    temp_json = os.path.join(original_dir, "temp_" + json_filename)
-                    converter_cmd = ["sbem2json.exe", "--sbem2json", sbem_file, "--output", temp_json]
-                    conv_process = subprocess.Popen(
-                        converter_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True
-                    )
-                    conv_output, _ = conv_process.communicate()
-                    
-                    if conv_process.returncode == 0 and os.path.exists(temp_json):
-                        utc_time = self.extract_utc_time_from_json(temp_json)
-                        if utc_time:
-                            # Check if file with this UTC timestamp already exists
-                            parts = os.path.splitext(sbem_filename)[0].split('_')
-                            if len(parts) >= 4:
-                                new_base = '_'.join(parts[:4])  # Keep Movesense_log_1_002030
-                                existing_file = os.path.join(original_dir, f"{new_base}_{utc_time}.json")
-                                
-                                if os.path.exists(existing_file):
-                                    # Remove temporary JSON and skip this file
-                                    os.remove(temp_json)
-                                    self.root.after(0, self.log_output, 
-                                        f"Skipping {sbem_filename} - File with UTC time {utc_time} already exists\n")
-                                    continue
-                            
-                            # If no existing file found, rename temp file to final name
-                            os.rename(temp_json, json_file)
-                        else:
-                            # No UTC time found, remove temp file and proceed with normal conversion
-                            os.remove(temp_json)
-                    else:
-                        # Conversion failed, clean up temp file if it exists
-                        if os.path.exists(temp_json):
-                            os.remove(temp_json)
 
                     # For sbem2json.exe
                     if getattr(sys, 'frozen', False):
