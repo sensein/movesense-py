@@ -9,6 +9,7 @@ import threading
 import os
 import sys
 import io
+import json
 from contextlib import redirect_stdout
 import datalogger_tool as tool  # Import the main functionality
 
@@ -178,6 +179,90 @@ class DataloggerGUI:
             self.logging_counter += 1
             
             self.root.after(2000, self.logging_data)
+
+    def extract_utc_time_from_json(self, json_file):
+        """Extract UTC time from JSON file"""
+        try:
+            with open(json_file, 'r') as f:
+                content = json.load(f)
+                time_detailed = {}
+                samples = content.get("Samples", [])
+                for sample in samples:
+                    if "TimeDetailed" in sample:
+                        time_detailed = sample["TimeDetailed"]
+                        break
+                utc_time = time_detailed.get("utcTime", "")
+                if utc_time:
+                    utc_time = int(utc_time)
+                    from datetime import datetime
+                    utc_time_str = datetime.utcfromtimestamp(utc_time / 1000000).strftime('%Y-%m-%d_%H%M%S')
+                    return utc_time_str
+        except Exception as e:
+            self.root.after(0, self.log_output, f"Error extracting UTC time from JSON: {str(e)}\n")
+        return None
+
+    def rename_files_with_utc(self, base_file, utc_time):
+        """Rename all related files (SBEM, JSON, CSV, EDF) to include UTC time"""
+        try:
+            # Get the directory and filename without extension
+            dir_path = os.path.dirname(base_file)
+            base_name = os.path.splitext(os.path.basename(base_file))[0]
+            
+            # Extract the serial number and log ID from the original name
+            # Example: Movesense_log_1_002030_2025-10-31_144708
+            # We want to keep the log_1_002030 part and replace the date
+            parts = base_name.split('_')
+            if len(parts) >= 4:  # Make sure we have enough parts
+                new_base = '_'.join(parts[:4])  # Keep Movesense_log_1_002030
+                
+                # Create new filename with UTC time
+                new_name = f"{new_base}_{utc_time}"
+                
+                # Check if files with this UTC time already exist
+                json_check = os.path.join(dir_path, f"{new_name}.json")
+                if os.path.exists(json_check) and json_check != base_file:
+                    self.root.after(0, self.log_output, 
+                        f"Skipping rename - File with UTC time {utc_time} already exists\n")
+                    return None
+                
+                # Dictionary of extensions to check and rename
+                extensions = ['.sbem', '.json', '.csv', '.edf']
+                
+                for ext in extensions:
+                    old_file = os.path.join(dir_path, f"{base_name}{ext}")
+                    new_file = os.path.join(dir_path, f"{new_name}{ext}")
+                    
+                    if os.path.exists(old_file) and old_file != new_file:
+                        if os.path.exists(new_file):
+                            # If file with UTC timestamp exists, remove the old file
+                            os.remove(old_file)
+                            self.root.after(0, self.log_output, 
+                                f"Removed duplicate: {os.path.basename(old_file)}\n")
+                        else:
+                            # Rename to new UTC-based filename
+                            os.rename(old_file, new_file)
+                            self.root.after(0, self.log_output, 
+                                f"Renamed: {os.path.basename(old_file)} -> {os.path.basename(new_file)}\n")
+                
+                # Also handle SBEM file in sbem-files folder
+                sbem_file = os.path.join(dir_path, 'sbem-files', f"{base_name}.sbem")
+                if os.path.exists(sbem_file):
+                    new_sbem = os.path.join(dir_path, 'sbem-files', f"{new_name}.sbem")
+                    if os.path.exists(new_sbem):
+                        # If file with UTC timestamp exists, remove the old file
+                        os.remove(sbem_file)
+                        self.root.after(0, self.log_output, 
+                            f"Removed duplicate SBEM: {os.path.basename(sbem_file)}\n")
+                    else:
+                        os.rename(sbem_file, new_sbem)
+                        self.root.after(0, self.log_output, 
+                            f"Renamed in sbem-files: {os.path.basename(sbem_file)} -> {os.path.basename(new_sbem)}\n")
+                
+                return new_file
+                
+        except Exception as e:
+            self.root.after(0, self.log_output, f"Error renaming files: {str(e)}\n")
+            return None
     
     @async_handler
     async def check_status(self):
@@ -393,8 +478,45 @@ class DataloggerGUI:
                     # Create output JSON filename in the original location
                     json_filename = os.path.splitext(sbem_filename)[0] + '.json'
                     json_file = os.path.join(original_dir, json_filename)
+                    
+                    # Try to extract UTC time from temporary JSON conversion first
+                    temp_json = os.path.join(original_dir, "temp_" + json_filename)
+                    converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", temp_json]
+                    conv_process = subprocess.Popen(
+                        converter_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True
+                    )
+                    conv_output, _ = conv_process.communicate()
+                    
+                    if conv_process.returncode == 0 and os.path.exists(temp_json):
+                        utc_time = self.extract_utc_time_from_json(temp_json)
+                        if utc_time:
+                            # Check if file with this UTC timestamp already exists
+                            parts = os.path.splitext(sbem_filename)[0].split('_')
+                            if len(parts) >= 4:
+                                new_base = '_'.join(parts[:4])  # Keep Movesense_log_1_002030
+                                existing_file = os.path.join(original_dir, f"{new_base}_{utc_time}.json")
+                                
+                                if os.path.exists(existing_file):
+                                    # Remove temporary JSON and skip this file
+                                    os.remove(temp_json)
+                                    self.root.after(0, self.log_output, 
+                                        f"Skipping {sbem_filename} - File with UTC time {utc_time} already exists\n")
+                                    continue
+                            
+                            # If no existing file found, rename temp file to final name
+                            os.rename(temp_json, json_file)
+                        else:
+                            # No UTC time found, remove temp file and proceed with normal conversion
+                            os.remove(temp_json)
+                    else:
+                        # Conversion failed, clean up temp file if it exists
+                        if os.path.exists(temp_json):
+                            os.remove(temp_json)
 
-                        # For sbem2json.exe
+                    # For sbem2json.exe
                     if getattr(sys, 'frozen', False):
                         application_path = sys._MEIPASS
                     else:
@@ -422,6 +544,13 @@ class DataloggerGUI:
                     else:
                         self.root.after(0, self.log_output, 
                             f"Created: {json_file}\n")
+                        
+                        # Extract UTC time and rename files after successful conversion
+                        utc_time = self.extract_utc_time_from_json(json_file)
+                        if utc_time:
+                            self.root.after(0, self.log_output, f"UTC time from file: {utc_time}\n")
+                            # Rename all related files with UTC time
+                            self.rename_files_with_utc(json_file, utc_time)
                         
                         # Move SBEM file to sbem-files folder AFTER successful conversion
                         new_sbem_path = os.path.join(sbem_folder, sbem_filename)
