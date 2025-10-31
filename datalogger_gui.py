@@ -218,13 +218,6 @@ class DataloggerGUI:
                 # Create new filename with UTC time
                 new_name = f"{new_base}_{utc_time}"
                 
-                # Check if files with this UTC time already exist
-                json_check = os.path.join(dir_path, f"{new_name}.json")
-                if os.path.exists(json_check) and json_check != base_file:
-                    self.root.after(0, self.log_output, 
-                        f"Skipping rename - File with UTC time {utc_time} already exists\n")
-                    return None
-                
                 # Dictionary of extensions to check and rename
                 extensions = ['.sbem', '.json', '.csv', '.edf']
                 
@@ -233,27 +226,21 @@ class DataloggerGUI:
                     new_file = os.path.join(dir_path, f"{new_name}{ext}")
                     
                     if os.path.exists(old_file) and old_file != new_file:
-                        if os.path.exists(new_file):
-                            # If file with UTC timestamp exists, remove the old file
-                            os.remove(old_file)
-                            self.root.after(0, self.log_output, 
-                                f"Removed duplicate: {os.path.basename(old_file)}\n")
-                        else:
-                            # Rename to new UTC-based filename
-                            os.rename(old_file, new_file)
-                            self.root.after(0, self.log_output, 
-                                f"Renamed: {os.path.basename(old_file)} -> {os.path.basename(new_file)}\n")
+                        # If the new filename already exists, add a suffix
+                        counter = 1
+                        while os.path.exists(new_file):
+                            new_file = os.path.join(dir_path, f"{new_name}_{counter}{ext}")
+                            counter += 1
+                            
+                        os.rename(old_file, new_file)
+                        self.root.after(0, self.log_output, 
+                            f"Renamed: {os.path.basename(old_file)} -> {os.path.basename(new_file)}\n")
                 
-                # Also handle SBEM file in sbem-files folder
+                # Also rename in sbem-files folder if exists
                 sbem_file = os.path.join(dir_path, 'sbem-files', f"{base_name}.sbem")
                 if os.path.exists(sbem_file):
                     new_sbem = os.path.join(dir_path, 'sbem-files', f"{new_name}.sbem")
-                    if os.path.exists(new_sbem):
-                        # If file with UTC timestamp exists, remove the old file
-                        os.remove(sbem_file)
-                        self.root.after(0, self.log_output, 
-                            f"Removed duplicate SBEM: {os.path.basename(sbem_file)}\n")
-                    else:
+                    if os.path.exists(sbem_file) and sbem_file != new_sbem:
                         os.rename(sbem_file, new_sbem)
                         self.root.after(0, self.log_output, 
                             f"Renamed in sbem-files: {os.path.basename(sbem_file)} -> {os.path.basename(new_sbem)}\n")
@@ -481,7 +468,7 @@ class DataloggerGUI:
                     
                     # Try to extract UTC time from temporary JSON conversion first
                     temp_json = os.path.join(original_dir, "temp_" + json_filename)
-                    converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", temp_json]
+                    converter_cmd = ["sbem2json.exe", "--sbem2json", sbem_file, "--output", temp_json]
                     conv_process = subprocess.Popen(
                         converter_cmd,
                         stdout=subprocess.PIPE,
