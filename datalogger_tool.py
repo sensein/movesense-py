@@ -1,6 +1,7 @@
 import argparse
 from datetime import datetime
 import io
+import os
 import sys
 import asyncio
 import logging
@@ -54,9 +55,10 @@ async def stop_logging(serial, args):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
-async def fetch_data(serial, args):
+async def fetch_data(serial, args, output_dir=None):
     """Fetch data from a specific device."""
     fetched_files = []
+    fetch_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
             # Use output directory if provided
@@ -66,10 +68,13 @@ async def fetch_data(serial, args):
                 start_time = datetime.now()
                 logging.info(f"Fetching log {log_id} from device {serial}")
                 output_file = None
-                if hasattr(args, 'output') and args.output:
-                    output_file = f"{args.output}/log_{serial}_{log_id}.sbem"
+                if output_dir:
+                    output_file = f"{output_dir}/Movesense_log_{log_id}_{serial}_{fetch_timestamp}.sbem"
+                elif hasattr(args, 'output') and args.output:
+                    output_file = f"{args.output}/Movesense_log_{log_id}_{serial}_{fetch_timestamp}.sbem"
 
                 result = await sensor.fetch_data(log_id=log_id, output_file=output_file)
+
                 if not result.get('success', False):
                     logging.info(f"No more logs to fetch (or error occurred)")
                     if 'status_code' in result and result['status_code'] != 404:
