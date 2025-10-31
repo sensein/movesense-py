@@ -68,16 +68,7 @@ class DataloggerGUI:
         self.config_entry.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
         self.config_entry.insert(0, "/Meas/ECG/200/mV")
         self.config_entry.state(["disabled"])
-        # ttk.Label(cmd_frame, text="Resource paths (space-separated)", 
-        #          font=("", 8), foreground="gray").grid(row=2, column=1, sticky=tk.W, padx=5)
         
-        # Row 3: Start/Stop
-        # button_frame = ttk.Frame(cmd_frame)
-        # button_frame.grid(row=3, column=0, columnspan=2, pady=30)
-        # ttk.Button(button_frame, text="Start Logging", 
-        #           command=self.start_logging, width=20).pack(side=tk.LEFT, padx=5)
-        # ttk.Button(button_frame, text="Stop Logging", 
-        #           command=self.stop_logging, width=20).pack(side=tk.LEFT, padx=5)
         # Row 3: Start Logging
         ttk.Label(cmd_frame, text="3.").grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
         ttk.Button(cmd_frame, text="Start Logging",
@@ -105,13 +96,6 @@ class DataloggerGUI:
         self.output_entry.insert(0, app_path)
         ttk.Button(fetch_frame, text="Browse...",
                 command=self.browse_output).pack(side=tk.LEFT, padx=(5, 0))
-        
-        # Row 5: Erase Memory
-        # ttk.Button(cmd_frame, text="Erase Memory", 
-        #           command=self.erase_memory, width=20).grid(row=5, column=0, padx=5, pady=5)
-        # self.force_var = tk.BooleanVar()
-        # ttk.Checkbutton(cmd_frame, text="Force (skip confirmation)", 
-        #                variable=self.force_var).grid(row=5, column=1, sticky=tk.W, padx=5)
         
         # Output Section
         output_frame = ttk.LabelFrame(main_frame, text="Output", padding="10")
@@ -174,6 +158,17 @@ class DataloggerGUI:
     def logging_data(self):
         """Print dots to show logging is active"""
         if hasattr(self, 'logging_active') and self.logging_active:
+            # Alternate between two different marks
+            if not hasattr(self, 'logging_counter'):
+                self.logging_counter = 0
+            
+            mark = "*" if self.logging_counter % 2 == 0 else "."
+            self.log_output(mark, newline=False)
+            self.logging_counter += 1
+            
+            self.root.after(2000, self.logging_data)
+
+        if hasattr(self, 'fetching_active') and self.fetching_active:
             # Alternate between two different marks
             if not hasattr(self, 'logging_counter'):
                 self.logging_counter = 0
@@ -334,7 +329,13 @@ class DataloggerGUI:
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
 
-        output_dir = self.output_entry.get().strip()
+        # Get output directory and convert to absolute path
+        output_dir = os.path.abspath(self.output_entry.get().strip())
+        # Create directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        self.root.after(0, self.log_output, f"Using directory: {output_dir}\n")
+
         if not output_dir:
             messagebox.showwarning("Warning", "Please specify an output directory")
             return
@@ -346,15 +347,19 @@ class DataloggerGUI:
             self.root.after(0, self.log_output, f"\nLoading data from device {serial}.\n")
             self.root.after(0, self.status_var.set, "Loading data from device.")
 
+            # Set logging active flag 
+            self.fetching_active = True
+            self.root.after(2000, self.logging_data)
+
             # Capture stdout to show in GUI
             output = io.StringIO()
             with redirect_stdout(output):
                 # Step 1: Fetch data
-                await tool.fetch_data(serial=serial, args=None)
+                await tool.fetch_data(serial=serial, args=None, output_dir=output_dir)
                 
             # Update GUI with fetch output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, "\n Fetch completed.\n")
+            self.root.after(0, self.log_output, "\n Logging completed.\n")
         
             # Step 2: Convert SBEM to JSON
             self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---\n")
@@ -515,6 +520,9 @@ class DataloggerGUI:
                     except Exception as e:
                         self.root.after(0, self.log_output, 
                             f"Warning: EDF conversion failed for {csv_file}: {str(e)}\n")
+
+            # Stop the dots
+            self.fetching_active = False
 
             # All done
             self.root.after(0, self.status_var.set, "All conversions completed.")
