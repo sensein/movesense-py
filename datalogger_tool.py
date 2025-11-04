@@ -58,7 +58,6 @@ async def stop_logging(serial, args):
 async def fetch_data(serial, args, output_dir=None):
     """Fetch data from a specific device."""
     fetched_files = []
-    fetch_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
             # Use output directory if provided
