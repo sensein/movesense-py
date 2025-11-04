@@ -133,6 +133,16 @@ class DataloggerGUI:
     
     def log_output(self, message, newline=True):
         """Add message to output text widget"""
+        # Filter out specific error messages
+        lines_to_filter = [
+            "TimelineJsonFormatter::embedAttributes: invalid map<K, T> key"
+        ]
+        
+        # Check if message should be filtered
+        for filter_text in lines_to_filter:
+            if filter_text in message:
+                return  # Skip this message
+            
         self.output_text.configure(state='normal')
         if newline:
             self.output_text.insert(tk.END, message + "\n")
@@ -531,7 +541,7 @@ class DataloggerGUI:
                         csv_path = os.path.splitext(json_path)[0] + '.csv'
                         if os.path.exists(csv_path):
                             self.root.after(0, self.log_output, 
-                                f"Skipping {file} - CSV already exists\n")
+                                f"Skipping {file} - CSV already exists")
                         else:
                             json_files.append(json_path)
             
@@ -560,22 +570,28 @@ class DataloggerGUI:
 
             # Find ECG-related CSV files in output directory
             csv_files = []
+            csv_files_total = 0
             for root_dir, dirs, files in os.walk(output_dir):
                 if 'venv' in root_dir or 'site-packages' in root_dir:
                     continue  # Skip virtual environment and site-packages directories
                 for file in files:
                     if file.endswith('.csv') and ('log_' in file.lower() or 'ecg' in file.lower()):
+                        csv_files_total += 1
                         csv_path = os.path.join(root_dir, file)
                         # Check if corresponding EDF already exists
                         edf_path = os.path.splitext(csv_path)[0] + '.edf'
                         if os.path.exists(edf_path):
                             self.root.after(0, self.log_output, 
-                                f"Skipping {file} - EDF already exists\n")
+                                f"Skipping {file} - EDF already exists")
                         else:
                             csv_files.append(csv_path)
 
             if not csv_files:
-                self.root.after(0, self.log_output, "No CSV files found to convert")
+                if csv_files_total == 0:
+                    self.root.after(0, self.log_output, "No CSV files found in directory")
+                else:
+                    self.root.after(0, self.log_output, 
+                        f"All CSV files already converted. No new EDF files to create.")
             else:
                 for csv_file in csv_files:
                     self.root.after(0, self.log_output, f"Converting: {csv_file}")
@@ -601,7 +617,7 @@ class DataloggerGUI:
 
             # All done
             self.root.after(0, self.status_var.set, "All conversions completed.")
-            self.root.after(0, self.log_output, "\n All conversions completed.")
+            self.root.after(0, self.log_output, "All conversions completed.")
         
         except Exception as e:
             self.root.after(0, self.log_output, f"\nError: {str(e)}")
