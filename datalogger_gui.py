@@ -60,8 +60,13 @@ class DataloggerGUI:
         
         # Verbose checkbox
         self.verbose_var = tk.BooleanVar()
-        ttk.Checkbutton(serial_frame, text="Verbose logging", 
-                       variable=self.verbose_var).grid(row=0, column=2, padx=(10, 0))
+        self.verbose_check = ttk.Checkbutton(
+            serial_frame,
+            text="Verbose logging",
+            variable=self.verbose_var
+        )
+        self.verbose_check.grid(row=0, column=2, padx=(10, 0))
+        self.verbose_check.grid_remove()
         
         # Commands Section
         cmd_frame = ttk.LabelFrame(main_frame, text="Commands", padding="10")
@@ -140,11 +145,23 @@ class DataloggerGUI:
         erase_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))  # frame spans full width
         erase_frame.columnconfigure(0, weight=1)  # push content to the right
 
-        ttk.Button(erase_frame, text="Erase Memory",
-                command=self.erase_memory, width=20).grid(row=0, column=1, padx=5, sticky=tk.E)
+        # Erase button
+        ttk.Button(
+            erase_frame,
+            text="Erase Memory",
+            command=self.erase_memory,
+            width=20
+        ).grid(row=0, column=1, padx=5, sticky=tk.E)
+
+        # Force checkbox (save a reference so we can hide it)
         self.force_var = tk.BooleanVar()
-        ttk.Checkbutton(erase_frame, text="Force (skip confirmation)",
-                        variable=self.force_var).grid(row=0, column=2, padx=5, sticky=tk.E)
+        self.force_check = ttk.Checkbutton(
+            erase_frame,
+            text="Force (skip confirmation)",
+            variable=self.force_var
+        )
+        self.force_check.grid(row=0, column=2, padx=5, sticky=tk.E)
+        self.force_check.grid_remove()
         
         # Configure row weights for resizing
         main_frame.rowconfigure(2, weight=1)
