@@ -5,7 +5,6 @@ from async_tkinter_loop import async_handler, async_mainloop
 from csv2edf import csv_to_edf_plus
 from ms_json2csv import convert_json_to_csv
 import subprocess
-import threading
 import os
 import sys
 import io
