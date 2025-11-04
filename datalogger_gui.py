@@ -4,6 +4,7 @@ from tkinter import ttk, scrolledtext, filedialog, messagebox
 from async_tkinter_loop import async_handler, async_mainloop
 from csv2edf import csv_to_edf_plus
 from ms_json2csv import convert_json_to_csv
+from PIL import Image, ImageTk
 import subprocess
 import os
 import sys
@@ -20,13 +21,29 @@ class DataloggerGUI:
 
         self.logging_configured = False
         
+        # Load and display the logo
+        try:
+            # Adjust the path to where your logo.png is located
+            logo_path = os.path.join(os.path.dirname(__file__), "Movesense logomark white.png")
+            logo_image = Image.open(logo_path)
+            # Resize the image if needed (adjust size as needed)
+            logo_image = logo_image.resize((70, 45), Image.Resampling.LANCZOS)
+            self.logo_photo = ImageTk.PhotoImage(logo_image)
+            
+            # Create and configure a label for the logo
+            self.logo_label = ttk.Label(self.root, image=self.logo_photo)
+            self.logo_label.grid(row=0, column=1, padx=(0, 30), pady=(10, 0), sticky=tk.NE) 
+        except Exception as e:
+            print(f"Could not load logo: {e}")
+        
         # Configure grid weights
-        self.root.columnconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)  # Main content column expands
+        self.root.columnconfigure(1, weight=0)  # Logo column stays fixed width
         self.root.rowconfigure(1, weight=1)
         
         # Create main container
         main_frame = ttk.Frame(root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))  # Added columnspan=2
         main_frame.columnconfigure(0, weight=1)
         
         # Serial Numbers Section
@@ -62,12 +79,14 @@ class DataloggerGUI:
         ttk.Label(cmd_frame, text="Check device connection and info").grid(row=0, column=2, sticky=tk.W, padx=5)
         
         # Row 1: Config
-        ttk.Button(cmd_frame, text="Configure Logging", 
-                  command=self.configure_logging, width=20).grid(row=0, column=3, padx=5, pady=5)
+        self.config_button = ttk.Button(cmd_frame, text="Configure Logging",
+                                command=self.configure_logging, width=20)
         self.config_entry = ttk.Entry(cmd_frame, width=30)
         self.config_entry.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
         self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        self.config_entry.state(["disabled"])
+        #self.config_entry.state(["disabled"])
+        self.config_button.grid_remove()
+        self.config_entry.grid_remove()
         
         # Row 3: Start Logging
         ttk.Label(cmd_frame, text="3.").grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
@@ -644,8 +663,8 @@ class DataloggerGUI:
             
             # Update status
             self.root.after(0, self.status_var.set, "Connecting to device...")
-            self.root.after(0, self.log_output, f"\nAttempting to connect to device {serial}...")
-            self.root.after(0, self.log_output, f"\nErasing memory on device {serial}...")
+            self.root.after(0, self.log_output, f"Attempting to connect to device {serial}...")
+            self.root.after(0, self.log_output, f"Erasing memory on device {serial}...")
             self.root.after(0, self.status_var.set, "Erasing memory on device.")
             
             # Always use force=True as required by the device protocol
@@ -655,7 +674,7 @@ class DataloggerGUI:
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, "\nMemory erased successfully")
+            self.root.after(0, self.log_output, "Memory erased successfully")
             self.root.after(0, self.status_var.set, "Memory erased")
                 
         except Exception as e:
