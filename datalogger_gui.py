@@ -88,15 +88,14 @@ class DataloggerGUI:
                 command=self.fetch_data, width=20).grid(row=5, column=1, padx=5, pady=5)
 
         fetch_frame = ttk.Frame(cmd_frame)
-        fetch_frame.grid(row=5, column=2, sticky=(tk.W, tk.E), padx=5)
-        ttk.Label(fetch_frame, text="Path:").pack(side=tk.LEFT, padx=(0, 5))
-        self.output_entry = ttk.Entry(fetch_frame)
-        self.output_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        #app_path = os.path.dirname(os.path.abspath(__file__))
-        app_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.output_entry.insert(0, app_path)
-        ttk.Button(fetch_frame, text="Browse...",
-                command=self.browse_output).pack(side=tk.LEFT, padx=(5, 0))
+        fetch_frame.grid(row=5, column=2, columnspan=3, sticky=(tk.W, tk.E), padx=5)
+        cmd_frame.columnconfigure(2, weight=1)  # make column 2 expandable
+        fetch_frame.columnconfigure(1, weight=1)  # make the Entry column expandable
+
+        ttk.Label(fetch_frame, text="Path:").grid(row=0, column=0, padx=(0, 5))
+        self.output_entry = ttk.Entry(fetch_frame, width=150)  # increased initial width
+        self.output_entry.grid(row=0, column=1, sticky="ew")  # expand horizontally
+        ttk.Button(fetch_frame, text="Browse...", command=self.browse_output).grid(row=0, column=2, padx=(5, 0))
         
         # Output Section
         output_frame = ttk.LabelFrame(main_frame, text="Output", padding="10")
@@ -202,51 +201,47 @@ class DataloggerGUI:
         return None
 
     def rename_files_with_utc(self, base_file, utc_time):
-        """Rename all related files (SBEM, JSON, CSV, EDF) to include UTC time"""
+        """Rename related files (JSON, CSV, EDF) to include UTC time"""
         try:
-            # Get the directory and filename without extension
             dir_path = os.path.dirname(base_file)
             base_name = os.path.splitext(os.path.basename(base_file))[0]
             
-            # Extract the serial number and log ID from the original name
-            # Example: Movesense_log_1_002030_2025-10-31_144708
-            # We want to keep the log_1_002030 part and replace the date
             parts = base_name.split('_')
-            if len(parts) >= 4:  # Make sure we have enough parts
-                new_base = '_'.join(parts[:4])  # Keep Movesense_log_1_002030
-                
-                # Create new filename with UTC time
+            if len(parts) >= 4:
+                new_base = '_'.join(parts[:4])
                 new_name = f"{new_base}_{utc_time}"
                 
-                # Dictionary of extensions to check and rename
-                extensions = ['.sbem', '.json', '.csv', '.edf']
+                # Check if already correctly named
+                if base_name == new_name:
+                    self.root.after(0, self.log_output, 
+                        f"File already has correct UTC timestamp: {base_name}\n")
+                    return base_file
+                
+                # Only handle JSON, CSV, and EDF (not SBEM)
+                extensions = ['.json', '.csv', '.edf']
                 
                 for ext in extensions:
                     old_file = os.path.join(dir_path, f"{base_name}{ext}")
                     new_file = os.path.join(dir_path, f"{new_name}{ext}")
                     
-                    if os.path.exists(old_file) and old_file != new_file:
-                        # If the new filename already exists, add a suffix
-                        counter = 1
-                        while os.path.exists(new_file):
-                            new_file = os.path.join(dir_path, f"{new_name}_{counter}{ext}")
-                            counter += 1
-                            
-                        os.rename(old_file, new_file)
-                        self.root.after(0, self.log_output, 
-                            f"Renamed: {os.path.basename(old_file)} -> {os.path.basename(new_file)}\n")
-                
-                # Also rename in sbem-files folder if exists
-                sbem_file = os.path.join(dir_path, 'sbem-files', f"{base_name}.sbem")
-                if os.path.exists(sbem_file):
-                    new_sbem = os.path.join(dir_path, 'sbem-files', f"{new_name}.sbem")
-                    if os.path.exists(sbem_file) and sbem_file != new_sbem:
-                        os.rename(sbem_file, new_sbem)
-                        self.root.after(0, self.log_output, 
-                            f"Renamed in sbem-files: {os.path.basename(sbem_file)} -> {os.path.basename(new_sbem)}\n")
+                    if os.path.exists(old_file):
+                        if old_file == new_file:
+                            # Already correctly named
+                            continue
+                        
+                        if os.path.exists(new_file):
+                            # Target already exists - don't rename, just delete the duplicate
+                            self.root.after(0, self.log_output, 
+                                f"Target exists, removing duplicate: {os.path.basename(old_file)}\n")
+                            os.remove(old_file)
+                        else:
+                            # Rename to correct name
+                            os.rename(old_file, new_file)
+                            self.root.after(0, self.log_output, 
+                                f"Renamed: {os.path.basename(old_file)} -> {os.path.basename(new_file)}\n")
                 
                 return new_file
-                
+                    
         except Exception as e:
             self.root.after(0, self.log_output, f"Error renaming files: {str(e)}\n")
             return None
@@ -324,7 +319,7 @@ class DataloggerGUI:
             serial = self.serial_entry.get().strip()
 
             if not self.logging_configured:
-                self.log_output("\nLogging not configured — configuring and starting logging...\n")
+                self.log_output("Logging not configured — configuring and starting logging...")
                 self.root.after(0, self.status_var.set, "Configuring and starting logging.")
                 
                 # Get config paths
@@ -344,7 +339,7 @@ class DataloggerGUI:
                 
                 # Update GUI with captured output
                 self.root.after(0, self.log_output, output.getvalue())
-                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}. Recording data...\n")
+                self.root.after(0, self.log_output, f"Logging started successfully on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
 
                 # Set logging active flag 
@@ -352,13 +347,13 @@ class DataloggerGUI:
                 self.root.after(2000, self.logging_data)
 
             else:
-                self.root.after(0, self.log_output, f"\nStarting logging on device {serial}...\n")
+                self.root.after(0, self.log_output, f"Starting logging on device {serial}...")
                 # Just start logging if already configured
                 output = io.StringIO()
                 with redirect_stdout(output):
                     await tool.start_logging(serial, args=None)
                 self.root.after(0, self.log_output, output.getvalue())
-                self.root.after(0, self.log_output, f"\nLogging started successfully on device {serial}. Recording data...\n")
+                self.root.after(0, self.log_output, f"Logging started successfully on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
 
                 # Set logging active flag 
@@ -366,7 +361,7 @@ class DataloggerGUI:
                 self.root.after(2000, self.logging_data)
                 
         except Exception as e:
-            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.log_output, f"Error: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
 
     @async_handler
@@ -380,19 +375,19 @@ class DataloggerGUI:
             # Capture stdout to show in GUI
             output = io.StringIO()
             serial = self.serial_entry.get().strip()
-            self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...\n")
+            self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...")
             self.root.after(0, self.status_var.set, "Stopping logging.")
             with redirect_stdout(output):
                 await tool.stop_logging(serial=serial, args=None)
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, f"\nLogging stopped successfully on device {serial}\n")
+            self.root.after(0, self.log_output, f"Logging stopped successfully on device {serial}")
             self.root.after(0, self.status_var.set, "Logging stopped")
                 
         except Exception as e:
             self.logging_active = False
-            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.log_output, f"Error: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
         
     @async_handler
@@ -415,8 +410,8 @@ class DataloggerGUI:
         try:
             serial = self.serial_entry.get().strip()
 
-            self.root.after(0, self.log_output, f"Current working directory: {os.getcwd()}\n")
-            self.root.after(0, self.log_output, f"\nLoading data from device {serial}.\n")
+            #self.root.after(0, self.log_output, f"Current working directory: {os.getcwd()}\n")
+            self.root.after(0, self.log_output, f"\nLoading data from device {serial}.")
             self.root.after(0, self.status_var.set, "Loading data from device.")
 
             # Set logging active flag 
@@ -428,20 +423,21 @@ class DataloggerGUI:
             with redirect_stdout(output):
                 # Step 1: Fetch data
                 await tool.fetch_data(serial=serial, args=None, output_dir=output_dir)
+                self.logging_configured = False
                 
             # Update GUI with fetch output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, "\n Logging completed.\n")
+            self.root.after(0, self.log_output, "\n Logging completed.")
         
             # Step 2: Convert SBEM to JSON
-            self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---\n")
+            self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---")
             self.root.after(0, self.status_var.set, "Converting SBEM to JSON...")
 
             # Create sbem-files folder if it doesn't exist
             sbem_folder = os.path.join(output_dir, "sbem-files")
             if not os.path.exists(sbem_folder):
                 os.makedirs(sbem_folder)
-                self.root.after(0, self.log_output, f"Created folder: {sbem_folder}\n")
+                self.root.after(0, self.log_output, f"Created folder: {sbem_folder}")
             
             # Find all .sbem files in output directory
             sbem_files = []
@@ -453,10 +449,10 @@ class DataloggerGUI:
                         sbem_files.append(os.path.join(root_dir, file))
             
             if not sbem_files:
-                self.root.after(0, self.log_output, "No SBEM files found to convert.\n")
+                self.root.after(0, self.log_output, "No SBEM files found to convert.")
             else:
                 for sbem_file in sbem_files:
-                    self.root.after(0, self.log_output, f"Converting: {sbem_file}\n")
+                    self.root.after(0, self.log_output, f"Converting: {sbem_file}")
 
                     # Get directory and filename
                     original_dir = os.path.dirname(sbem_file)
@@ -498,7 +494,7 @@ class DataloggerGUI:
                         # Extract UTC time and rename files after successful conversion
                         utc_time = self.extract_utc_time_from_json(json_file)
                         if utc_time:
-                            self.root.after(0, self.log_output, f"UTC time from file: {utc_time}\n")
+                            self.root.after(0, self.log_output, f"UTC time from file: {utc_time}")
                             # Rename all related files with UTC time
                             self.rename_files_with_utc(json_file, utc_time)
                         
@@ -509,17 +505,17 @@ class DataloggerGUI:
                                 # Delete the sbem file since we already have it archived
                                 os.remove(sbem_file)
                                 self.root.after(0, self.log_output, 
-                                    f"Removed SBEM (already archived): {sbem_filename}\n")
+                                    f"Removed SBEM (already archived): {sbem_filename}")
                             else:
                                 # Move to sbem-files folder
                                 os.rename(sbem_file, new_sbem_path)
                                 self.root.after(0, self.log_output, 
-                                    f"Moved SBEM to: {new_sbem_path}\n")
+                                    f"Moved SBEM to: {new_sbem_path}")
                         except Exception as e:
-                            self.root.after(0, self.log_output, f"Warning: Could not move SBEM file: {str(e)}\n")
+                            self.root.after(0, self.log_output, f"Warning: Could not move SBEM file: {str(e)}")
             
             # Step 3: Convert JSON to CSV
-            self.root.after(0, self.log_output, "\n--- Converting JSON to CSV ---\n")
+            self.root.after(0, self.log_output, "\n--- Converting JSON to CSV ---")
             self.root.after(0, self.status_var.set, "Converting JSON to CSV...")
             
             # Find all .json files in output directory
@@ -540,10 +536,10 @@ class DataloggerGUI:
                             json_files.append(json_path)
             
             if not json_files:
-                self.root.after(0, self.log_output, "No JSON files found to convert\n")
+                self.root.after(0, self.log_output, "No JSON files found to convert")
             else:
                 for json_file in json_files:
-                    self.root.after(0, self.log_output, f"Converting: {json_file}\n")
+                    self.root.after(0, self.log_output, f"Converting: {json_file}")
                     
                     # Create output CSV filename (same name, different extension)
                     csv_file = os.path.splitext(json_file)[0] + '.csv'
@@ -552,14 +548,14 @@ class DataloggerGUI:
                         convert_json_to_csv(input_file=json_file, 
                                     output_file=csv_file)
 
-                        self.root.after(0, self.log_output, f"Created: {csv_file}\n")
+                        self.root.after(0, self.log_output, f"Created: {csv_file}")
 
                     except Exception as e:
                         self.root.after(0, self.log_output, 
-                            f"Warning: CSV conversion failed for {json_file}: {str(e)}\n")
+                            f"Warning: CSV conversion failed for {json_file}: {str(e)}")
                         
             # Step 4: Convert CSV to EDF
-            self.root.after(0, self.log_output, "\n--- Converting CSV to EDF ---\n")
+            self.root.after(0, self.log_output, "\n--- Converting CSV to EDF ---")
             self.root.after(0, self.status_var.set, "Converting CSV to EDF...")
 
             # Find ECG-related CSV files in output directory
@@ -579,10 +575,10 @@ class DataloggerGUI:
                             csv_files.append(csv_path)
 
             if not csv_files:
-                self.root.after(0, self.log_output, "No CSV files found to convert\n")
+                self.root.after(0, self.log_output, "No CSV files found to convert")
             else:
                 for csv_file in csv_files:
-                    self.root.after(0, self.log_output, f"Converting: {csv_file}\n")
+                    self.root.after(0, self.log_output, f"Converting: {csv_file}")
                     
                     # Create output EDF filename (same name, different extension)
                     edf_file = os.path.splitext(csv_file)[0] + '.edf'
@@ -594,21 +590,21 @@ class DataloggerGUI:
                                     unit='mV', 
                                     scale_factor=1)
 
-                        self.root.after(0, self.log_output, f"Created: {edf_file}\n")
+                        self.root.after(0, self.log_output, f"Created: {edf_file}")
 
                     except Exception as e:
                         self.root.after(0, self.log_output, 
-                            f"Warning: EDF conversion failed for {csv_file}: {str(e)}\n")
+                            f"Warning: EDF conversion failed for {csv_file}: {str(e)}")
 
             # Stop the dots
             self.fetching_active = False
 
             # All done
             self.root.after(0, self.status_var.set, "All conversions completed.")
-            self.root.after(0, self.log_output, "\n All conversions completed.\n")
+            self.root.after(0, self.log_output, "\n All conversions completed.")
         
         except Exception as e:
-            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
+            self.root.after(0, self.log_output, f"\nError: {str(e)}")
             self.root.after(0, self.status_var.set, "Error occurred")
     
     @async_handler
@@ -633,8 +629,8 @@ class DataloggerGUI:
             
             # Update status
             self.root.after(0, self.status_var.set, "Connecting to device...")
-            self.root.after(0, self.log_output, f"\nAttempting to connect to device {serial}...\n")
-            self.root.after(0, self.log_output, f"\nErasing memory on device {serial}...\n")
+            self.root.after(0, self.log_output, f"\nAttempting to connect to device {serial}...")
+            self.root.after(0, self.log_output, f"\nErasing memory on device {serial}...")
             self.root.after(0, self.status_var.set, "Erasing memory on device.")
             
             # Always use force=True as required by the device protocol
@@ -644,12 +640,12 @@ class DataloggerGUI:
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, "\nMemory erased successfully\n")
+            self.root.after(0, self.log_output, "\nMemory erased successfully")
             self.root.after(0, self.status_var.set, "Memory erased")
                 
         except Exception as e:
             error_msg = str(e)
-            self.root.after(0, self.log_output, f"\nError: {error_msg}\n")
+            self.root.after(0, self.log_output, f"\nError: {error_msg}")
             self.root.after(0, self.status_var.set, "Error occurred")
             self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to erase memory: {error_msg}"))
 
