@@ -48,11 +48,26 @@ def convert_json_to_csv(input_file, output_file):
                     time_detailed = sample["TimeDetailed"]
                     break
 
+            # Handle relative time with error checking
             relative_time = time_detailed.get("relativeTime", "")
-            relative_time = int(relative_time) / 1000
+            try:
+                relative_time = int(relative_time) / 1000 if relative_time else 0
+            except (ValueError, TypeError):
+                relative_time = 0
+                print(f"Warning: Could not parse relativeTime, using 0")
+
+            # Handle UTC time with error checking
             utc_time = time_detailed.get("utcTime", "")
-            utc_time = int(utc_time)
-            utc_time = datetime.utcfromtimestamp(utc_time / 1000000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            try:
+                utc_time_int = int(utc_time) if utc_time else 0
+                if utc_time_int > 0:
+                    utc_time = datetime.utcfromtimestamp(utc_time_int / 1000000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                else:
+                    utc_time = "N/A"
+                    print(f"Warning: No UTC time found, using N/A")
+            except (ValueError, TypeError, OSError):
+                utc_time = "N/A"
+                print(f"Warning: Could not parse utcTime, using N/A")
     
             # Skip non-data entries (like TimeDetailed)
             if not any('Samples' in entry or 'samples' in entry for entry in entries if isinstance(entry, dict)):
