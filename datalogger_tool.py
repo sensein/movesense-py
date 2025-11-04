@@ -58,7 +58,6 @@ async def stop_logging(serial, args):
 async def fetch_data(serial, args, output_dir=None):
     """Fetch data from a specific device."""
     fetched_files = []
-    fetch_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
             # Use output directory if provided
@@ -69,9 +68,9 @@ async def fetch_data(serial, args, output_dir=None):
                 logging.info(f"Fetching log {log_id} from device {serial}")
                 output_file = None
                 if output_dir:
-                    output_file = f"{output_dir}/Movesense_log_{log_id}_{serial}_{fetch_timestamp}.sbem"
+                    output_file = f"{output_dir}/Movesense_log_{log_id}_{serial}.sbem"
                 elif hasattr(args, 'output') and args.output:
-                    output_file = f"{args.output}/Movesense_log_{log_id}_{serial}_{fetch_timestamp}.sbem"
+                    output_file = f"{args.output}/Movesense_log_{log_id}_{serial}.sbem"
 
                 result = await sensor.fetch_data(log_id=log_id, output_file=output_file)
 
