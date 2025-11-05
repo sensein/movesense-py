@@ -301,7 +301,6 @@ class DataloggerGUI:
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
     
-    
     @async_handler
     async  def configure_logging(self):
         """Configure logging paths"""
@@ -631,7 +630,6 @@ class DataloggerGUI:
             self.root.after(0, self.status_var.set, "All conversions completed.")
             self.root.after(0, self.log_output, "All conversions completed.")
             self.root.after(0, self.log_output, "\nDone!\n")
-
         
         except Exception as e:
             self.root.after(0, self.log_output, f"\nError: {str(e)}")
@@ -678,8 +676,7 @@ class DataloggerGUI:
             self.root.after(0, self.log_output, f"\nError: {error_msg}")
             self.root.after(0, self.status_var.set, "Error occurred")
             self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to erase memory: {error_msg}"))
-
-    
+   
     def browse_output(self):
         """Browse for output directory"""
         directory = filedialog.askdirectory(title="Select Output Directory")
