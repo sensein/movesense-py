@@ -5,6 +5,7 @@ Based on the Bleak GATT client for cross-platform BLE communication.
 """
 
 import binascii
+import io
 import logging
 import asyncio
 import os

@@ -49,3 +49,8 @@ Thumbs.db
 *.wmv
 
 .vscode/launch.json
+
+.venv/
+venv/
+build/
+output*

@@ -15,19 +15,20 @@ async def fetch_status(serial, args):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
-async def configure_device(serial, args):
+async def configure_device(serial, args = None, paths = None):
     """Configure a specific device."""
     try:
         async with SensorCommand(serial) as sensor:
             # Use config file if provided
             config_data = bytearray()  # Default empty config
 
-            if hasattr(args, 'path') and args.path:
+            if not paths and hasattr(args, 'path') and args.path:
                 paths = args.path
-                paths.append("/Time/Detailed")
-                for path in paths:
-                    logging.info(f"- Adding path {path} to DataLogger configuration")
-                    config_data.extend(path.encode('utf-8') + b'\0')
+        
+            paths.append("/Time/Detailed")
+            for path in paths:
+                logging.info(f"- Adding path {path} to DataLogger configuration")
+                config_data.extend(path.encode('utf-8') + b'\0')
 
             result = await sensor.configure_device(config_data)
             return result
@@ -52,7 +53,7 @@ async def stop_logging(serial, args):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
-async def fetch_data(serial, args):
+async def fetch_data(serial, args, output_dir=None):
     """Fetch data from a specific device."""
     fetched_files = []
     try:
@@ -64,10 +65,13 @@ async def fetch_data(serial, args):
                 start_time = datetime.now()
                 logging.info(f"Fetching log {log_id} from device {serial}")
                 output_file = None
-                if hasattr(args, 'output') and args.output:
-                    output_file = f"{args.output}/log_{serial}_{log_id}.sbem"
+                if output_dir:
+                    output_file = f"{output_dir}/Movesense_log_{log_id}_{serial}.sbem"
+                elif hasattr(args, 'output') and args.output:
+                    output_file = f"{args.output}/Movesense_log_{log_id}_{serial}.sbem"
 
                 result = await sensor.fetch_data(log_id=log_id, output_file=output_file)
+
                 if not result.get('success', False):
                     logging.info(f"No more logs to fetch (or error occurred)")
                     if 'status_code' in result and result['status_code'] != 404:

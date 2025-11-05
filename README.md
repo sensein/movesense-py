@@ -2,14 +2,18 @@
 
 A Python command-line interface (CLI) tool for managing BLE (Bluetooth Low Energy) datalogger devices using the GSP (GATT SensorData Protocol). This tool allows you to configure, control, and retrieve data from compatible sensor devices.
 
+# ECG GUI tool
+
+A graphical user interface (GUI) application for recording and retrieving ECG data from Movesense sensors. This tool simplifies the process of logging ECG sensor data, dowloading it, and converting it to multiple formats for analysis.
+
 ## Features
 
 - **Device Status**: Check connection and get device information
-- **Configuration**: Set up logging paths and parameters
+- **Configuration**: Set up logging paths and parameters (Only Python Datalogger tool. ECG GUI tool is configured for ECG recordings at 200 Hz with mV units.)
 - **Logging Control**: Start and stop data logging
 - **Data Retrieval**: Fetch logged data files from devices
 - **Memory Management**: Clear device memory when needed
-- **Multi-device Support**: Handle multiple sensors simultaneously
+- **Multi-device Support**: Handle multiple sensors simultaneously (Only Python Datalogger tool)
 - **Cross-platform**: Works on macOS, Windows, and Linux
 
 ## Requirements
@@ -31,9 +35,24 @@ cd python-datalogger-tool
 pip install -r requirements.txt
 ```
 
-## Usage
+## Usage : Datalogger tool
 
-The tool provides several commands to interact with datalogger devices. All commands require specifying device serial numbers (or their last few digits) using the `-s` flag.
+This command line tool provides several commands to interact with datalogger devices. All commands require specifying device serial numbers (or their last few digits) using the `-s` flag.
+
+## Usage : ECG GUI tool
+
+This graphical user interface tool provides a simplified workflow for ECG data logging. All operations require entering the device serial number in the GUI.
+
+### ECG GUI Quick start
+   Follow the numbered steps (1-5) in the interface:
+      - **Step 1:** Enter your sensor's serial number
+      - **Step 2:** Connect to verify device status
+      - **Step 3:** Start logging
+      - **Step 4:** Stop logging when done
+      - **Step 5:** Load data (downloads and converts automatically)
+   Click "Erase Memory" to clear all logged data from sensor
+
+   **Note:** This GUI version is specifically configured for ECG recordings at 200 Hz with mV units.
 
 ### Basic Command Structure
 

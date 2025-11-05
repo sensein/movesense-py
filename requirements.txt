@@ -1,6 +1,12 @@
 bleak==1.1.1
-pyobjc-core==11.1
-pyobjc-framework-Cocoa==11.1
-pyobjc-framework-CoreBluetooth==11.1
-pyobjc-framework-libdispatch==11.1
+pyobjc-core==11.1; sys_platform == "darwin"
+pyobjc-framework-Cocoa==11.1; sys_platform == "darwin"
+pyobjc-framework-CoreBluetooth==11.1; sys_platform == "darwin"
+pyobjc-framework-libdispatch==11.1; sys_platform == "darwin"
 typing_extensions==4.15.0
+async-tkinter-loop==0.10.2
+
+
+pandas==2.2.3
+numpy==1.26.4
+pyedflib==0.1.34
