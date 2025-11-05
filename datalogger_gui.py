@@ -11,7 +11,7 @@ import sys
 import io
 import json
 from contextlib import redirect_stdout
-import datalogger_tool as tool  # Import the main functionality
+import datalogger_tool as tool  
 
 class DataloggerGUI:
     def __init__(self, root):
@@ -23,10 +23,9 @@ class DataloggerGUI:
         
         # Load and display the logo
         try:
-            # Adjust the path to where your logo.png is located
             logo_path = os.path.join(os.path.dirname(__file__), "Movesense logomark white.png")
             logo_image = Image.open(logo_path)
-            # Resize the image if needed (adjust size as needed)
+            # Resize the image
             logo_image = logo_image.resize((70, 45), Image.Resampling.LANCZOS)
             self.logo_photo = ImageTk.PhotoImage(logo_image)
             
@@ -37,13 +36,13 @@ class DataloggerGUI:
             print(f"Could not load logo: {e}")
         
         # Configure grid weights
-        self.root.columnconfigure(0, weight=1)  # Main content column expands
-        self.root.columnconfigure(1, weight=0)  # Logo column stays fixed width
+        self.root.columnconfigure(0, weight=1)
+        self.root.columnconfigure(1, weight=0)  
         self.root.rowconfigure(1, weight=1)
         
         # Create main container
         main_frame = ttk.Frame(root, padding="10")
-        main_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))  # Added columnspan=2
+        main_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))  
         main_frame.columnconfigure(0, weight=1)
         
         # Serial Numbers Section
@@ -54,7 +53,6 @@ class DataloggerGUI:
         ttk.Label(serial_frame, text="1.    Serial Number:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
         self.serial_entry = ttk.Entry(serial_frame, width=50)
         self.serial_entry.grid(row=0, column=1, sticky=(tk.W, tk.E))
-        # self.serial_entry.insert(0, "last five digits from serial number")
         ttk.Label(serial_frame, text="(e.g., 254230002030)", 
                  font=("", 8), foreground="gray").grid(row=1, column=1, sticky=tk.W)
         
@@ -72,52 +70,46 @@ class DataloggerGUI:
         cmd_frame = ttk.LabelFrame(main_frame, text="Commands", padding="10")
         cmd_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
 
-        # Configure columns once at the top
+        # Configure columns
         cmd_frame.columnconfigure(0, minsize=25)   # narrow column for numbers
         cmd_frame.columnconfigure(1, weight=0)     # buttons
         cmd_frame.columnconfigure(2, weight=1)     # text fields, labels, frames stretch
         
         # Row 0: Connect / Status
         ttk.Label(cmd_frame, text="2.").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
-        ttk.Button(cmd_frame, text="Connect",
-                command=self.check_status, width=20).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Button(cmd_frame, text="Connect", command=self.check_status, width=20).grid(row=0, column=1, padx=5, pady=5)
         ttk.Label(cmd_frame, text="Check device connection and info").grid(row=0, column=2, sticky=tk.W, padx=5)
         
         # Row 1: Config
-        self.config_button = ttk.Button(cmd_frame, text="Configure Logging",
-                                command=self.configure_logging, width=20)
+        self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
         self.config_entry = ttk.Entry(cmd_frame, width=30)
         self.config_entry.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
         self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        #self.config_entry.state(["disabled"])
         self.config_button.grid_remove()
         self.config_entry.grid_remove()
         
         # Row 3: Start Logging
         ttk.Label(cmd_frame, text="3.").grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
-        ttk.Button(cmd_frame, text="Start Logging",
-                command=self.start_logging, width=20).grid(row=3, column=1, padx=5, pady=5)
+        ttk.Button(cmd_frame, text="Start Logging", command=self.start_logging, width=20).grid(row=3, column=1, padx=5, pady=5)
         ttk.Label(cmd_frame, text="Begin data logging").grid(row=3, column=2, sticky=tk.W, padx=5)
 
         # Row 3: Stop Logging
         ttk.Label(cmd_frame, text="4.").grid(row=4, column=0, sticky=tk.W, padx=(0, 5))
-        ttk.Button(cmd_frame, text="Stop Logging",
-                command=self.stop_logging, width=20).grid(row=4, column=1, padx=5, pady=5)
+        ttk.Button(cmd_frame, text="Stop Logging", command=self.stop_logging, width=20).grid(row=4, column=1, padx=5, pady=5)
         ttk.Label(cmd_frame, text="Stop the logging process").grid(row=4, column=2, sticky=tk.W, padx=5)
         
         # Row 4: Fetch
         ttk.Label(cmd_frame, text="5.").grid(row=5, column=0, sticky=tk.W, padx=(0, 5))
-        ttk.Button(cmd_frame, text="Load Data",
-                command=self.fetch_data, width=20).grid(row=5, column=1, padx=5, pady=5)
+        ttk.Button(cmd_frame, text="Load Data", command=self.fetch_data, width=20).grid(row=5, column=1, padx=5, pady=5)
 
         fetch_frame = ttk.Frame(cmd_frame)
         fetch_frame.grid(row=5, column=2, columnspan=3, sticky=(tk.W, tk.E), padx=5)
-        cmd_frame.columnconfigure(2, weight=1)  # make column 2 expandable
-        fetch_frame.columnconfigure(1, weight=1)  # make the Entry column expandable
+        cmd_frame.columnconfigure(2, weight=1)  
+        fetch_frame.columnconfigure(1, weight=1) 
 
         ttk.Label(fetch_frame, text="Path:").grid(row=0, column=0, padx=(0, 5))
-        self.output_entry = ttk.Entry(fetch_frame, width=150)  # increased initial width
-        self.output_entry.grid(row=0, column=1, sticky="ew")  # expand horizontally
+        self.output_entry = ttk.Entry(fetch_frame, width=150) 
+        self.output_entry.grid(row=0, column=1, sticky="ew")  
         ttk.Button(fetch_frame, text="Browse...", command=self.browse_output).grid(row=0, column=2, padx=(5, 0))
         
         # Output Section
@@ -125,41 +117,28 @@ class DataloggerGUI:
         output_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         output_frame.columnconfigure(0, weight=1)
         output_frame.rowconfigure(0, weight=1)
-        
-        self.output_text = scrolledtext.ScrolledText(output_frame, height=10, width=80, 
-                                                     wrap=tk.WORD, state='disabled')
+        self.output_text = scrolledtext.ScrolledText(output_frame, height=10, width=80, wrap=tk.WORD, state='disabled')
         self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Clear output button
-        ttk.Button(output_frame, text="Clear Output", 
-                  command=self.clear_output).grid(row=1, column=0, pady=(5, 0))
+        ttk.Button(output_frame, text="Clear Output", command=self.clear_output).grid(row=1, column=0, pady=(5, 0))
         
         # Status bar
         self.status_var = tk.StringVar(value="Ready")
-        status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
-                              relief=tk.SUNKEN, anchor=tk.W)
+        status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E))
 
         # Erase Memory
         erase_frame = ttk.Frame(main_frame, padding="5")
-        erase_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))  # frame spans full width
-        erase_frame.columnconfigure(0, weight=1)  # push content to the right
+        erase_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))  
+        erase_frame.columnconfigure(0, weight=1)  
 
         # Erase button
-        ttk.Button(
-            erase_frame,
-            text="Erase Memory",
-            command=self.erase_memory,
-            width=20
-        ).grid(row=0, column=1, padx=5, sticky=tk.E)
+        ttk.Button(erase_frame, text="Erase Memory", command=self.erase_memory, width=20).grid(row=0, column=1, padx=5, sticky=tk.E)
 
-        # Force checkbox (save a reference so we can hide it)
+        # Force checkbox 
         self.force_var = tk.BooleanVar()
-        self.force_check = ttk.Checkbutton(
-            erase_frame,
-            text="Force (skip confirmation)",
-            variable=self.force_var
-        )
+        self.force_check = ttk.Checkbutton(erase_frame, text="Force (skip confirmation)", variable=self.force_var)
         self.force_check.grid(row=0, column=2, padx=5, sticky=tk.E)
         self.force_check.grid_remove()
         
@@ -176,7 +155,7 @@ class DataloggerGUI:
         # Check if message should be filtered
         for filter_text in lines_to_filter:
             if filter_text in message:
-                return  # Skip this message
+                return 
             
         self.output_text.configure(state='normal')
         if newline:
@@ -393,7 +372,7 @@ class DataloggerGUI:
 
             else:
                 self.root.after(0, self.log_output, f"Starting logging on device {serial}...")
-                # Just start logging if already configured
+                # Start logging if already configured
                 output = io.StringIO()
                 with redirect_stdout(output):
                     await tool.start_logging(serial, args=None)
@@ -454,8 +433,6 @@ class DataloggerGUI:
 
         try:
             serial = self.serial_entry.get().strip()
-
-            #self.root.after(0, self.log_output, f"Current working directory: {os.getcwd()}\n")
             self.root.after(0, self.log_output, f"\nLoading data from device {serial}.")
             self.root.after(0, self.status_var.set, "Loading data from device")
 
@@ -543,11 +520,11 @@ class DataloggerGUI:
                             # Rename all related files with UTC time
                             self.rename_files_with_utc(json_file, utc_time)
                         
-                        # Move SBEM file to sbem-files folder AFTER successful conversion
+                        # Move SBEM file to sbem-files folder after successful conversion
                         new_sbem_path = os.path.join(sbem_folder, sbem_filename)
                         try:
                             if os.path.exists(new_sbem_path):
-                                # Delete the sbem file since we already have it archived
+                                # Delete the sbem file since it archived
                                 os.remove(sbem_file)
                                 self.root.after(0, self.log_output, 
                                     f"Removed SBEM (already archived): {sbem_filename}")
@@ -586,7 +563,7 @@ class DataloggerGUI:
                 for json_file in json_files:
                     self.root.after(0, self.log_output, f"Converting: {json_file}")
                     
-                    # Create output CSV filename (same name, different extension)
+                    # Create output CSV filename
                     csv_file = os.path.splitext(json_file)[0] + '.csv'
 
                     try: 
@@ -631,7 +608,7 @@ class DataloggerGUI:
                 for csv_file in csv_files:
                     self.root.after(0, self.log_output, f"Converting: {csv_file}")
                     
-                    # Create output EDF filename (same name, different extension)
+                    # Create output EDF filename 
                     edf_file = os.path.splitext(csv_file)[0] + '.edf'
 
                     try: 
