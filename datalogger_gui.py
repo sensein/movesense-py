@@ -364,7 +364,7 @@ class DataloggerGUI:
             serial = self.serial_entry.get().strip()
 
             if not self.logging_configured:
-                self.log_output("Logging not configured — configuring and starting logging...")
+                self.log_output("Configuring and starting logging...")
                 self.root.after(0, self.status_var.set, "Configuring and starting logging.")
                 
                 # Get config paths
@@ -384,7 +384,7 @@ class DataloggerGUI:
                 
                 # Update GUI with captured output
                 self.root.after(0, self.log_output, output.getvalue())
-                self.root.after(0, self.log_output, f"Logging started successfully on device {serial}. Recording data...")
+                self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
 
                 # Set logging active flag 
@@ -398,7 +398,7 @@ class DataloggerGUI:
                 with redirect_stdout(output):
                     await tool.start_logging(serial, args=None)
                 self.root.after(0, self.log_output, output.getvalue())
-                self.root.after(0, self.log_output, f"Logging started successfully on device {serial}. Recording data...")
+                self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
 
                 # Set logging active flag 
@@ -427,7 +427,7 @@ class DataloggerGUI:
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, f"Logging stopped successfully on device {serial}")
+            self.root.after(0, self.log_output, f"Logging stopped on device {serial}")
             self.root.after(0, self.status_var.set, "Logging stopped")
                 
         except Exception as e:
@@ -457,7 +457,7 @@ class DataloggerGUI:
 
             #self.root.after(0, self.log_output, f"Current working directory: {os.getcwd()}\n")
             self.root.after(0, self.log_output, f"\nLoading data from device {serial}.")
-            self.root.after(0, self.status_var.set, "Loading data from device.")
+            self.root.after(0, self.status_var.set, "Loading data from device")
 
             # Set logging active flag 
             self.fetching_active = True
@@ -653,6 +653,8 @@ class DataloggerGUI:
             # All done
             self.root.after(0, self.status_var.set, "All conversions completed.")
             self.root.after(0, self.log_output, "All conversions completed.")
+            self.root.after(0, self.log_output, "\nDone!")
+
         
         except Exception as e:
             self.root.after(0, self.log_output, f"\nError: {str(e)}")
