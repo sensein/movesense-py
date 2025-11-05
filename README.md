@@ -44,7 +44,7 @@ This command line tool provides several commands to interact with datalogger dev
 This graphical user interface tool provides a simplified workflow for ECG data logging. All operations require entering the device serial number in the GUI.
 
 ### ECG GUI Quick start
-   1. Open `Movesense_datalogger_gui.exe`
+   1. Open `Movesense_ECG_datalogger_gui.exe`
    2. Follow the numbered steps (1-5) in the interface:
       - **Step 1:** Enter your sensor's serial number
       - **Step 2:** Connect to verify device status
