@@ -630,7 +630,7 @@ class DataloggerGUI:
             # All done
             self.root.after(0, self.status_var.set, "All conversions completed.")
             self.root.after(0, self.log_output, "All conversions completed.")
-            self.root.after(0, self.log_output, "\nDone!")
+            self.root.after(0, self.log_output, "\nDone!\n")
 
         
         except Exception as e:
