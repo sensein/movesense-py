@@ -126,8 +126,6 @@ def convert_json_to_csv(input_file, output_file):
                 else:
                     # For last chunk, use the dt from previous chunks
                     dt = prev_dt
-
-                # print(f"  Chunk {chunk_idx}: timestamp={timestamp}, samples={n}, dt={dt:.4f} ms")
                 
                 # Add each sample with interpolated timestamp
                 for i, value in enumerate(data_array):
@@ -137,8 +135,6 @@ def convert_json_to_csv(input_file, output_file):
                     
                     sample_timestamp = int(timestamp + i * dt)
                     all_data.append((sample_timestamp, value))
-
-                    #print(f"  sample {i:02d}: {sample_timestamp} ms -> {value:.6f} mV")
 
             print(f"\nTotal samples collected: {len(all_data)}")
             
