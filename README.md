@@ -44,14 +44,13 @@ This command line tool provides several commands to interact with datalogger dev
 This graphical user interface tool provides a simplified workflow for ECG data logging. All operations require entering the device serial number in the GUI.
 
 ### ECG GUI Quick start
-   1. Open `Movesense_ECG_datalogger_gui.exe`
-   2. Follow the numbered steps (1-5) in the interface:
+   Follow the numbered steps (1-5) in the interface:
       - **Step 1:** Enter your sensor's serial number
       - **Step 2:** Connect to verify device status
       - **Step 3:** Start logging
       - **Step 4:** Stop logging when done
       - **Step 5:** Load data (downloads and converts automatically)
-   3. Click "Erase Memory" to clear all logged data from sensor
+   Click "Erase Memory" to clear all logged data from sensor
 
    **Note:** This GUI version is specifically configured for ECG recordings at 200 Hz with mV units.
 
