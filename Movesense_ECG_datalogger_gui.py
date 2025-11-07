@@ -11,8 +11,175 @@ import sys
 import io
 import re
 import json
+import traceback
 from contextlib import redirect_stdout
 import datalogger_tool as tool  
+
+import tkinter as tk
+from tkinter import ttk, scrolledtext
+
+class AdvancedConfigDialog:
+    """Dialog for advanced configuration options"""
+    MAX_SELECTIONS = 3  # NEW: Maximum allowed selections
+
+    def __init__(self, parent, current_config):
+        self.result = None
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Advanced Configuration")
+        self.dialog.geometry("600x550")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(self.dialog, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.dialog.columnconfigure(0, weight=1)
+        self.dialog.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
+        
+        # Title
+        ttk.Label(main_frame, text="Advanced Logging Configuration", 
+                  font=("", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        
+        # --- Measurement options ---
+        options_frame = ttk.LabelFrame(main_frame, text="Available Measurements", padding="10")
+        options_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        options_frame.columnconfigure(0, weight=1)
+
+        # Define available measurements
+        IMU_rates = [13, 26, 52, 104, 208, 416, 833]
+        self.measurements = {
+            "/Meas/Acc": IMU_rates,
+            "/Meas/Gyro": IMU_rates,
+            "/Meas/Ecg": [125, 128, 200, 250, 256, 500, 512],
+            "/Meas/HR": [],
+            "Meas/IMU6" : IMU_rates,
+            "Meas/IMU6m" : IMU_rates,
+            "Meas/IMU9" : IMU_rates,
+            "/Meas/Magn": IMU_rates,
+            "/Meas/Temp": [],
+            
+        }
+
+        self.vars = {}       # checkbutton variables
+        self.rate_vars = {}  # combobox variables
+
+        for i, (meas, rates) in enumerate(self.measurements.items()):
+            row_frame = ttk.Frame(options_frame)
+            row_frame.grid(row=i, column=0, sticky=(tk.W, tk.E), pady=2)
+            
+            var = tk.BooleanVar(value=False)
+            self.vars[meas] = var
+            chk = ttk.Checkbutton(row_frame, text=meas, variable=var,
+                                  command=lambda m=meas: self.on_checkbox_toggle(m))  # NEW
+            chk.grid(row=0, column=0, sticky=tk.W)
+
+            if rates:
+                rate_var = tk.StringVar(value=str(rates[0]))
+                self.rate_vars[meas] = rate_var
+                cb = ttk.Combobox(row_frame, textvariable=rate_var,
+                                  values=[str(r) for r in rates],
+                                  width=6, state="readonly")
+                cb.grid(row=0, column=1, padx=10)
+                cb.bind("<<ComboboxSelected>>", lambda e: self.update_config_text())
+
+        # --- Counter & feedback ---
+        counter_frame = ttk.Frame(main_frame)
+        counter_frame.grid(row=2, column=0, sticky=tk.W, pady=(0, 10))
+        self.counter_label = ttk.Label(counter_frame, text="")
+        self.counter_label.grid(row=0, column=0, sticky=tk.W)
+        self.warning_label = ttk.Label(counter_frame, text="", foreground="red")
+        self.warning_label.grid(row=1, column=0, sticky=tk.W)
+        self.update_counter_label()  # Initialize text
+
+        # --- Configuration output ---
+        config_frame = ttk.LabelFrame(main_frame, text="Configuration Paths", padding="10")
+        config_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        config_frame.columnconfigure(0, weight=1)
+        
+        self.config_text = scrolledtext.ScrolledText(config_frame, height=5, width=60, wrap=tk.WORD)
+        self.config_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        self.config_text.insert("1.0", current_config)
+        self.config_text.configure(state='disabled')  # NEW: make read-only
+        
+        # --- Buttons ---
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=4, column=0, sticky=(tk.E), pady=(10, 0))
+        
+        ttk.Button(button_frame, text="Reset to Default", command=self.reset_default).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self.cancel).grid(row=0, column=1, padx=5)
+        ttk.Button(button_frame, text="Apply", command=self.apply).grid(row=0, column=2, padx=5)
+        
+        # Center dialog on parent
+        self.dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.dialog.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.dialog.winfo_height()) // 2
+        self.dialog.geometry(f"+{x}+{y}")
+
+    # --- When checkbox is toggled ---
+    def on_checkbox_toggle(self, meas):
+        selected_count = sum(var.get() for var in self.vars.values())
+        if selected_count > self.MAX_SELECTIONS:
+            # Too many -> uncheck and warn
+            self.vars[meas].set(False)
+            self.warning_label.configure(text=f"⚠ You can select at most {self.MAX_SELECTIONS} paths.")
+        else:
+            self.warning_label.configure(text="")
+        self.update_config_text()
+        self.update_counter_label()
+
+    # --- Updates counter label ---
+    def update_counter_label(self):
+        selected_count = sum(var.get() for var in self.vars.values())
+        remaining = self.MAX_SELECTIONS - selected_count
+
+        if remaining == 0:
+            msg = f"Selected {selected_count}/{self.MAX_SELECTIONS}. You have reached the maximum number of selections."
+            color = "black"
+        else:
+            msg = f"Selected {selected_count}/{self.MAX_SELECTIONS}. You can still choose {remaining} more."
+            color = "black"
+
+        self.counter_label.configure(text=msg, foreground=color)
+
+    # --- Live update handler ---
+    def update_config_text(self):
+        """Refresh config text area based on current selections"""
+        selected = []
+        for meas, var in self.vars.items():
+            if var.get():
+                rate = self.rate_vars.get(meas)
+                if rate:
+                    selected.append(f"{meas}/{rate.get()}")
+                else:
+                    selected.append(meas)
+        config_text = ", ".join(selected)
+        self.config_text.configure(state='normal')
+        self.config_text.delete("1.0", tk.END)
+        self.config_text.insert("1.0", config_text)
+        self.config_text.configure(state='disabled')
+
+    def reset_default(self):
+        for meas in self.vars:
+            self.vars[meas].set(False)
+        # self.vars["/Meas/Acc"].set(True)
+        # self.vars["/Meas/Gyro"].set(True)
+        self.vars["/Meas/Ecg"].set(True)
+        # self.rate_vars["/Meas/Acc"].set("52")
+        # self.rate_vars["/Meas/Gyro"].set("52")
+        self.rate_vars["/Meas/Ecg"].set("200")
+        self.warning_label.configure(text="")
+        self.update_config_text()
+        self.update_counter_label()
+
+    def cancel(self):
+        self.dialog.destroy()
+
+    def apply(self):
+        """Collect selected options and sample rates"""
+        self.result = self.config_text.get("1.0", tk.END).strip()
+        self.dialog.destroy()
 
 class DataloggerGUI:
     def __init__(self, root):
@@ -88,31 +255,51 @@ class DataloggerGUI:
         # self.config_entry.insert(0, "/Meas/ECG/200/mV")
         # self.config_button.grid_remove()
         # self.config_entry.grid_remove()
+        # ttk.Label(cmd_frame, text="2b.").grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
+        # self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
+        # self.config_button.grid(row=1, column=1, padx=5, pady=5)
+        # self.config_entry = ttk.Entry(cmd_frame, width=30)
+        # self.config_entry.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        # self.config_entry.insert(0, "/Meas/ECG/200/mV")
+        # ttk.Label(cmd_frame, text="(Optional: configure before starting)", 
+        #         font=("", 8), foreground="gray").grid(row=2, column=2, sticky=tk.W, padx=5)
+
+        # Row 1: Config with Advanced button
         ttk.Label(cmd_frame, text="2b.").grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
         self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
         self.config_button.grid(row=1, column=1, padx=5, pady=5)
-        self.config_entry = ttk.Entry(cmd_frame, width=30)
-        self.config_entry.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Config entry frame with advanced button
+        config_entry_frame = ttk.Frame(cmd_frame)
+        config_entry_frame.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        config_entry_frame.columnconfigure(0, weight=1)
+        
+        self.config_entry = ttk.Entry(config_entry_frame, width=30)
+        self.config_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
         self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        ttk.Label(cmd_frame, text="(Optional: configure before starting)", 
-                font=("", 8), foreground="gray").grid(row=2, column=2, sticky=tk.W, padx=5)
+        
+        ttk.Button(config_entry_frame, text="Advanced...", 
+                  command=self.show_advanced_config, width=12).grid(row=0, column=1, padx=(5, 0))
         
         # Row 3: Start Logging
         ttk.Label(cmd_frame, text="3.").grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
         ttk.Button(cmd_frame, text="Start Logging", command=self.start_logging, width=20).grid(row=3, column=1, padx=5, pady=5)
         ttk.Label(cmd_frame, text="Begin data logging").grid(row=3, column=2, sticky=tk.W, padx=5)
 
+        # Compact separator between Start and Stop
+        ttk.Separator(cmd_frame, orient='horizontal').grid(row=4, column=0, columnspan=3, sticky="ew", pady=10)
+
         # Row 3: Stop Logging
-        ttk.Label(cmd_frame, text="4.").grid(row=4, column=0, sticky=tk.W, padx=(0, 5))
-        ttk.Button(cmd_frame, text="Stop Logging", command=self.stop_logging, width=20).grid(row=4, column=1, padx=5, pady=5)
-        ttk.Label(cmd_frame, text="Stop the logging process").grid(row=4, column=2, sticky=tk.W, padx=5)
+        ttk.Label(cmd_frame, text="4.").grid(row=5, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Button(cmd_frame, text="Stop Logging", command=self.stop_logging, width=20).grid(row=5, column=1, padx=5, pady=5)
+        ttk.Label(cmd_frame, text="Stop the logging process").grid(row=5, column=2, sticky=tk.W, padx=5)
         
         # Row 4: Fetch
-        ttk.Label(cmd_frame, text="5.").grid(row=5, column=0, sticky=tk.W, padx=(0, 5))
-        ttk.Button(cmd_frame, text="Load Data", command=self.fetch_data, width=20).grid(row=5, column=1, padx=5, pady=5)
+        ttk.Label(cmd_frame, text="5.").grid(row=6, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Button(cmd_frame, text="Load Data", command=self.fetch_data, width=20).grid(row=6, column=1, padx=5, pady=5)
 
         fetch_frame = ttk.Frame(cmd_frame)
-        fetch_frame.grid(row=5, column=2, columnspan=3, sticky=(tk.W, tk.E), padx=5)
+        fetch_frame.grid(row=6, column=2, columnspan=3, sticky=(tk.W, tk.E), padx=5)
         cmd_frame.columnconfigure(2, weight=1)  
         fetch_frame.columnconfigure(1, weight=1) 
 
@@ -153,6 +340,19 @@ class DataloggerGUI:
         
         # Configure row weights for resizing
         main_frame.rowconfigure(2, weight=1)
+
+    def show_advanced_config(self):
+        """Show the advanced configuration dialog"""
+        current_config = self.config_entry.get().strip()
+        dialog = AdvancedConfigDialog(self.root, current_config)
+        self.root.wait_window(dialog.dialog)
+        
+        if dialog.result is not None:
+            self.config_entry.delete(0, tk.END)
+            # Convert multiline to single line with spaces
+            config_text = ' '.join(dialog.result.split())
+            self.config_entry.insert(0, config_text)
+            self.log_output(f"Configuration updated: {config_text}\n")
     
     def log_output(self, message, newline=True):
         """Add message to output text widget"""
@@ -286,6 +486,11 @@ class DataloggerGUI:
         """Check device status"""
         try:
             serial = self.serial_entry.get().strip()
+
+            if not serial:
+                messagebox.showwarning("Warning", "Please enter a valid serial number.")
+                self.root.after(0, self.status_var.set, "Missing serial number.")
+                return
             
             self.root.after(0, self.log_output, "Connecting sensor and loading status...")
             self.root.after(0, self.status_var.set, "Connecting sensor and loading status.")
@@ -294,6 +499,14 @@ class DataloggerGUI:
             output = io.StringIO()
             with redirect_stdout(output):
                 status = await tool.fetch_status(serial=serial, args=None)
+
+            # --- Handle tool errors ---
+            if isinstance(status, dict) and not status.get("success", True):
+                error_msg = status.get("error", "Status fetch failed (unknown error).")
+                self.root.after(0, self.log_output, f"Error during status fetch: {error_msg}\n")
+                self.root.after(0, self.status_var.set, "Status fetch failed.")
+                return
+            with redirect_stdout(output):
                 print(f"Device {serial} status:")
                 print(f"  Protocol version: {status.get('protocol_version', 'Unknown')}")
                 print(f"  Serial number: {status.get('serial_number', 'Unknown')}")
@@ -307,6 +520,7 @@ class DataloggerGUI:
             self.root.after(0, self.status_var.set, "Status check completed.")
                 
         except Exception as e:
+            error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
     
@@ -328,75 +542,119 @@ class DataloggerGUI:
                 messagebox.showwarning("Warning", "Please enter at least one resource path")
                 return
             serial = self.serial_entry.get().strip()
+            if not serial:
+                messagebox.showwarning("Warning", "Please enter a valid serial number.")
+                self.root.after(0, self.status_var.set, "Missing serial number.")
+                return
             
             # Capture stdout to show in GUI
             output = io.StringIO()
             with redirect_stdout(output):
-                await tool.configure_device(serial, paths=paths)
-                print(f"Logging configured for device {serial} with paths: {paths}")
+                result = await tool.configure_device(serial, paths=paths)
+                # print(f"Logging configured for device {serial} with paths: {paths}")
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.status_var.set, "Logging configured")
+
+            if isinstance(result, dict) and not result.get("success", True):
+                error_msg = result.get("error", "Configuration failed (unknown error).")
+                self.root.after(0, self.log_output, f"Error during configuration: {error_msg}\n")
+                self.root.after(0, self.status_var.set, "Configuration failed.")
+                return
+        
+            self.root.after(0, self.log_output, f"Logging configured for device {serial} with paths: {paths}")
+            self.root.after(0, self.status_var.set, "Logging configured successfully.")
             self.logging_configured = True
                
         except Exception as e:
-            self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
-            self.root.after(0, self.status_var.set, "Error occurred")
+            error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
+            self.root.after(0, self.log_output, error_text)
+            self.root.after(0, self.status_var.set, "Error occurred.")
         
     @async_handler
     async def start_logging(self):
         """Start logging"""
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
+        
         try:
             serial = self.serial_entry.get().strip()
+            if not serial:
+                messagebox.showwarning("Warning", "Please enter a valid serial number.")
+                self.root.after(0, self.status_var.set, "Missing serial number.")
+                return
 
             if not self.logging_configured:
-                self.log_output("Configuring and starting logging...")
+                self.root.after(0, self.log_output, "Configuring and starting logging...")
                 self.root.after(0, self.status_var.set, "Configuring and starting logging.")
-                
-                # Get config paths
-                paths = self.config_entry.get().strip().split()
+
+                # Parse paths safely (split by spaces, commas, etc.)
+                raw_input = self.config_entry.get().strip()
+                paths = [p.strip() for p in re.split(r'[,\s]+', raw_input) if p.strip()]
                 if not paths:
-                    messagebox.showwarning("Warning", "Please enter at least one resource path")
+                    messagebox.showwarning("Warning", "Please enter at least one resource path.")
+                    self.root.after(0, self.status_var.set, "Missing configuration paths.")
                     return
-                
-                # Capture stdout to show in GUI
+
+                # Capture stdout
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    # Configure logging
-                    await tool.configure_device(serial, paths=paths)
-                    self.logging_configured = True
-                    # Start logging immediately after configuration
-                    await tool.start_logging(serial, args=None)
-                
-                # Update GUI with captured output
+                    config_result = await tool.configure_device(serial, paths=paths)
+                    start_result = None
+                    if not (isinstance(config_result, dict) and not config_result.get("success", True)):
+                        start_result = await tool.start_logging(serial, args=None)
+
+                # Update GUI with captured stdout first
                 self.root.after(0, self.log_output, output.getvalue())
+
+                # Handle configuration errors
+                if isinstance(config_result, dict) and not config_result.get("success", True):
+                    error_msg = config_result.get("error", "Configuration failed (unknown error).")
+                    self.root.after(0, self.log_output, f"Error during configuration: {error_msg}\n")
+                    self.root.after(0, self.status_var.set, "Configuration failed.")
+                    return
+
+                self.logging_configured = True
+
+                # Handle start errors
+                if isinstance(start_result, dict) and not start_result.get("success", True):
+                    error_msg = start_result.get("error", "Start failed (unknown error).")
+                    self.root.after(0, self.log_output, f"Error during start: {error_msg}\n")
+                    self.root.after(0, self.status_var.set, "Error occurred while starting.")
+                    return
+
+                # Success path
                 self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
-
-                # Set logging active flag 
                 self.logging_active = True
                 self.root.after(2000, self.logging_data)
 
             else:
+                # Already configured — just start logging
                 self.root.after(0, self.log_output, f"Starting logging on device {serial}...")
-                # Start logging if already configured
+                self.root.after(0, self.status_var.set, "Starting logging...")
+
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    await tool.start_logging(serial, args=None)
+                    start_result = await tool.start_logging(serial, args=None)
+
                 self.root.after(0, self.log_output, output.getvalue())
+
+                if isinstance(start_result, dict) and not start_result.get("success", True):
+                    error_msg = start_result.get("error", "Start failed (unknown error).")
+                    self.root.after(0, self.log_output, f"Error during start: {error_msg}\n")
+                    self.root.after(0, self.status_var.set, "Error occurred while starting.")
+                    return
+
                 self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
-
-                # Set logging active flag 
                 self.logging_active = True
                 self.root.after(2000, self.logging_data)
-                
+
         except Exception as e:
-            self.root.after(0, self.log_output, f"Error: {str(e)}\n")
-            self.root.after(0, self.status_var.set, "Error occurred")
+            error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
+            self.root.after(0, self.log_output, error_text)
+            self.root.after(0, self.status_var.set, "Error occurred.")
 
     @async_handler
     async def stop_logging(self):
@@ -404,6 +662,12 @@ class DataloggerGUI:
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
         try:
+
+            serial = self.serial_entry.get().strip()
+            if not serial:
+                messagebox.showwarning("Warning", "Please enter a valid serial number")
+                return
+            
             # Stop the dots
             self.logging_active = False
             # Capture stdout to show in GUI
@@ -411,17 +675,26 @@ class DataloggerGUI:
             serial = self.serial_entry.get().strip()
             self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...")
             self.root.after(0, self.status_var.set, "Stopping logging.")
+
             with redirect_stdout(output):
-                await tool.stop_logging(serial=serial, args=None)
-            
-            # Update GUI with captured output
+                result = await tool.stop_logging(serial=serial, args=None)
+
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, f"Logging stopped on device {serial}")
-            self.root.after(0, self.status_var.set, "Logging stopped")
-                
+            
+            # Check result structure
+            if isinstance(result, dict) and not result.get("success", True):
+                error_msg = result.get("error", "Unknown error")
+                self.root.after(0, self.log_output, f"Error: {error_msg}\n")
+                self.root.after(0, self.status_var.set, "Error occurred")
+            else:
+                self.root.after(0, self.log_output, f"Logging stopped on device {serial}")
+                self.root.after(0, self.status_var.set, "Logging stopped")
+
         except Exception as e:
+            import traceback
             self.logging_active = False
-            self.root.after(0, self.log_output, f"Error: {str(e)}\n")
+            error_text = f"Error: {str(e)}\n\n{traceback.format_exc()}"
+            self.root.after(0, self.log_output, error_text)
             self.root.after(0, self.status_var.set, "Error occurred")
         
     @async_handler
@@ -430,19 +703,23 @@ class DataloggerGUI:
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
 
+        serial = self.serial_entry.get().strip()
+        if not serial:
+            messagebox.showwarning("Warning", "Please enter a valid serial number")
+            return
+
         # Get output directory and convert to absolute path
         output_dir = os.path.abspath(self.output_entry.get().strip())
-        # Create directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
-        
-        self.root.after(0, self.log_output, f"Using directory: {output_dir}\n")
-
         if not output_dir:
             messagebox.showwarning("Warning", "Please specify an output directory")
             return
 
+        # Convert to absolute path and create directory if needed
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+        self.root.after(0, self.log_output, f"Using directory: {output_dir}\n")
+
         try:
-            serial = self.serial_entry.get().strip()
             self.root.after(0, self.log_output, f"\nLoading data from device {serial}.")
             self.root.after(0, self.status_var.set, "Loading data from device")
 
@@ -454,12 +731,20 @@ class DataloggerGUI:
             output = io.StringIO()
             with redirect_stdout(output):
                 # Step 1: Fetch data
-                await tool.fetch_data(serial=serial, args=None, output_dir=output_dir)
+                result = await tool.fetch_data(serial=serial, args=None, output_dir=output_dir)
                 self.logging_configured = False
                 
             # Update GUI with fetch output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.log_output, "\n Logging completed.")
+            # self.root.after(0, self.log_output, "\n Logging completed.")
+
+            if not result.get("success", False):
+                self.root.after(0, self.log_output, f"\nError fetching data: {result.get('error', 'Unknown error')}\n")
+                self.root.after(0, self.status_var.set, "Error occurred during data fetch")
+                self.fetching_active = False
+                return
+            
+            self.root.after(0, self.log_output, "\nLogging completed successfully.")
         
             # Step 2: Convert SBEM to JSON
             self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---")
@@ -649,6 +934,7 @@ class DataloggerGUI:
             self.root.after(0, self.log_output, "\nDone!\n")
         
         except Exception as e:
+            self.fetching_active = False
             self.root.after(0, self.log_output, f"\nError: {str(e)}")
             self.root.after(0, self.status_var.set, "Error occurred")
     
