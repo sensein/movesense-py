@@ -9,155 +9,139 @@ ECG_LSB_TO_MV = 0.000381469726563
 def convert_json_to_csv(input_file, output_file):
     """
     Convert a JSON file containing sensor data to CSV format.
-    
-    Args:
-        input_file (str): Path to the input JSON file
-        output_file (str): Path to the output CSV file
-        
-    Returns:
-        bool: True if conversion was successful, False otherwise
+    Works for ECG, ACC, GYRO, TEMP, and similar Meas* streams.
     """
-
     with open(input_file, 'r') as f:
         print("Parsing JSON...")
         content = json.load(f)
-        
-        # Find sensor streams
-        samples = content["Samples"]
-        print(f"Total sample entries: {len(samples)}")
 
-        # Group samples by type
-        sample_streams = {}        
-        for sample in samples:
-            sample_type = list(sample.keys())[0]
-            if sample_type not in sample_streams:
-                sample_streams[sample_type] = []
-            sample_streams[sample_type].append(sample[sample_type])
+    samples = content.get("Samples", [])
+    print(f"Total sample entries: {len(samples)}")
 
-        print(f"Streams found: {list(sample_streams.keys())}")
+    # Group samples by stream name
+    sample_streams = {}
+    for sample in samples:
+        sample_type = list(sample.keys())[0]
+        if sample_type == "TimeDetailed":
+            continue
+        sample_streams.setdefault(sample_type, []).append(sample[sample_type])
 
-        # Process each stream and write to individual CSV
-        for stream_name, entries in sample_streams.items():
-            print(f"\n{'='*60}")
-            print(f"Processing stream: {stream_name}")
-            print(f"Number of chunks: {len(entries)}")
+    print(f"Streams found: {list(sample_streams.keys())}")
 
-            time_detailed = {}
-            for sample in samples:
-                if "TimeDetailed" in sample:
-                    time_detailed = sample["TimeDetailed"]
-                    break
+    # Extract time reference (if available)
+    time_detailed = next((s["TimeDetailed"] for s in samples if "TimeDetailed" in s), {})
+    relative_time = time_detailed.get("relativeTime", 0)
+    utc_time = time_detailed.get("utcTime", 0)
+    try:
+        relative_time = int(relative_time) / 1000
+    except Exception:
+        relative_time = 0
+    try:
+        utc_time_str = datetime.utcfromtimestamp(int(utc_time) / 1_000_000).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    except Exception:
+        utc_time_str = "N/A"
 
-            # Handle relative time with error checking
-            relative_time = time_detailed.get("relativeTime", "")
-            try:
-                relative_time = int(relative_time) / 1000 if relative_time else 0
-            except (ValueError, TypeError):
-                relative_time = 0
-                print(f"Warning: Could not parse relativeTime, using 0")
+    # Process each stream
+    for stream_name, entries in sample_streams.items():
+        print(f"\n{'='*60}\nProcessing stream: {stream_name}")
+        all_data = []
+        prev_dt = 5.0  # default sample step (ms)
 
-            # Handle UTC time with error checking
-            utc_time = time_detailed.get("utcTime", "")
-            try:
-                utc_time_int = int(utc_time) if utc_time else 0
-                if utc_time_int > 0:
-                    utc_time = datetime.utcfromtimestamp(utc_time_int / 1000000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                else:
-                    utc_time = "N/A"
-                    print(f"Warning: No UTC time found, using N/A")
-            except (ValueError, TypeError, OSError):
-                utc_time = "N/A"
-                print(f"Warning: Could not parse utcTime, using N/A")
-    
-            # Skip non-data entries (like TimeDetailed)
-            if not any('Samples' in entry or 'samples' in entry for entry in entries if isinstance(entry, dict)):
-                print(f"Skipping {stream_name} - no sample data found")
+        for chunk_idx, entry in enumerate(entries):
+            # --- Universal timestamp handling ---
+            timestamp = entry.get("Timestamp") or entry.get("timestamp")
+
+            # If missing, try to find it inside nested dicts
+            if timestamp is None:
+                for v in entry.values():
+                    if isinstance(v, dict) and "Timestamp" in v:
+                        timestamp = v["Timestamp"]
+                        entry = v
+                        break
+
+            if timestamp is None:
+                print(f"Warning: chunk {chunk_idx} missing Timestamp, skipping")
                 continue
 
-            # Collect all samples and timestamps in order
-            all_data = []  # List of (timestamp, value) tuples
-            prev_dt = 5.0  # Default time step in ms
+            # --- Find the data field ---
+            data_keys = [k for k in entry.keys() if k.lower() not in ["timestamp"]]
+            if len(data_keys) == 0:
+                print(f"Warning: no data key in chunk {chunk_idx}: {list(entry.keys())}")
+                continue
 
-            for chunk_idx, entry in enumerate(entries):
-                if not isinstance(entry, dict):
-                    continue
-                    
-                timestamp = entry.get("Timestamp")
-                
-                if timestamp is None:
-                    print(f"Warning: chunk {chunk_idx} missing Timestamp, skipping")
-                    continue
+            # Prefer known field names (Samples, Measurement, ArrayAcc, etc.)
+            preferred_fields = ["Samples", "Measurement", "ArrayAcc", "ArrayGyro", "ArrayMag"]
+            data_key = next((k for k in preferred_fields if k in entry), data_keys[0])
+            data_array = entry[data_key]
 
-                # Determine the key containing the actual data
-                data_keys = [k for k in entry.keys() if k not in ["Timestamp", "timestamp"]]
-                if len(data_keys) != 1:
-                    print(f"Warning: unexpected data structure in chunk {chunk_idx}: {list(entry.keys())}")
-                    continue
-                
-                data_key = data_keys[0]
-                data_array = entry[data_key]
-
-                # If data_array is a nested dict, extract the samples
-                if isinstance(data_array, dict):
-                    nested_key = list(data_array.keys())[0]
-                    print(f"Detected nested structure, using key: {nested_key}")
-                    data_array = data_array[nested_key]
-
-                # Check if it's a list
-                if not isinstance(data_array, list):
-                    print(f"Warning: data is not a list in chunk {chunk_idx}, skipping")
-                    continue
-
-                n = len(data_array)
-                
-                # Calculate time increment between samples
-                if chunk_idx + 1 < len(entries):
-                    # Use next chunk's timestamp to calculate dt
-                    next_entry = entries[chunk_idx + 1]
-                    if isinstance(next_entry, dict):
-                        next_timestamp = next_entry.get("Timestamp")
-                        if next_timestamp and next_timestamp > timestamp:
-                            dt = (next_timestamp - timestamp) / n
-                            prev_dt = dt  # Store for potential use in last chunk
-                        else:
-                            dt = prev_dt  # Use previous dt if next timestamp is invalid
-                    else:
-                        dt = prev_dt
+            # --- Normalize data to a list of values ---
+            if isinstance(data_array, (int, float)):
+                values = [data_array]
+            elif isinstance(data_array, dict):
+                # Flatten nested vectors (x,y,z)
+                if all(isinstance(v, (int, float)) for v in data_array.values()):
+                    values = [[data_array.get("x", 0), data_array.get("y", 0), data_array.get("z", 0)]]
                 else:
-                    # For last chunk, use the dt from previous chunks
+                    # Nested lists or other dicts
+                    values = []
+                    for v in data_array.values():
+                        if isinstance(v, list):
+                            values.extend(v)
+            elif isinstance(data_array, list):
+                # Might be a list of scalars or dicts
+                if len(data_array) > 0 and isinstance(data_array[0], dict) and all(k in data_array[0] for k in ("x", "y", "z")):
+                    values = [[i["x"], i["y"], i["z"]] for i in data_array]
+                else:
+                    values = data_array
+            else:
+                print(f"Warning: data not recognized in chunk {chunk_idx}, skipping")
+                continue
+
+            n = len(values)
+            # --- Estimate dt between chunks ---
+            if chunk_idx + 1 < len(entries):
+                next_ts = entries[chunk_idx + 1].get("Timestamp") or 0
+                if next_ts and next_ts > timestamp:
+                    dt = (next_ts - timestamp) / n
+                    prev_dt = dt
+                else:
                     dt = prev_dt
-                
-                # Add each sample with interpolated timestamp
-                for i, value in enumerate(data_array):
-                    # Convert ECG values if needed
-                    if "ECG" in stream_name.upper() and stream_name != "MeasECGmV":
-                        value = value * ECG_LSB_TO_MV
-                    
-                    sample_timestamp = int(timestamp + i * dt)
-                    all_data.append((sample_timestamp, value))
+            else:
+                dt = prev_dt
 
-            print(f"\nTotal samples collected: {len(all_data)}")
-            
-            if len(all_data) == 0:
-                print(f"No valid samples found for {stream_name}, skipping")
-                continue
+            # --- Append samples with timestamps ---
+            for i, val in enumerate(values):
+                ts = int(timestamp + i * dt)
+                all_data.append((ts, val))
 
-            # Sort by timestamp 
-            all_data.sort(key=lambda x: x[0])
-            
-            # Write to CSV
-            print(f"\n Writing to: {output_file}")
-            
-            with open(output_file, 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(["Timestamp_ms", "Value", "Relative Time:", relative_time, "UTC Time:", utc_time])
-                print(f"Relative time", relative_time)
-                print(f"UTC time", utc_time)
-                for ts, val in all_data:
-                    writer.writerow([f"{ts}", f"{val:.3f}"])
+        if not all_data:
+            print(f"No valid samples found for {stream_name}, skipping.")
+            continue
 
-            print(f"Successfully saved {len(all_data)} samples")
-            print(f"\n CSV file saved successfully to: {os.path.abspath(output_file)}")
+        all_data.sort(key=lambda x: x[0])
+
+        base, _ = os.path.splitext(output_file)
+        stream_output = f"{base}_{stream_name}.csv"
+
+        # --- Write CSV ---
+        print(f"Writing {len(all_data)} samples to {stream_output}")
+        with open(stream_output, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+
+            first_val = all_data[0][1]
+            if isinstance(first_val, list) and len(first_val) == 3:
+                header = ["Timestamp_ms", "X", "Y", "Z", "RelativeTime", relative_time, "UTC", utc_time_str]
+            else:
+                header = ["Timestamp_ms", "Value", "RelativeTime", relative_time, "UTC", utc_time_str]
+            writer.writerow(header)
+
+            for ts, val in all_data:
+                if isinstance(val, list):
+                    writer.writerow([ts] + [f"{v:.6f}" for v in val])
+                else:
+                    writer.writerow([ts, f"{val:.6f}"])
+
+        print(f"Saved {len(all_data)} samples to {stream_output}")
 
 def main():
     if len(sys.argv) < 3:
