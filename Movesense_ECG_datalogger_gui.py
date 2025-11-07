@@ -9,6 +9,7 @@ import subprocess
 import os
 import sys
 import io
+import re
 import json
 from contextlib import redirect_stdout
 import datalogger_tool as tool  
@@ -81,12 +82,20 @@ class DataloggerGUI:
         ttk.Label(cmd_frame, text="Check device connection and info").grid(row=0, column=2, sticky=tk.W, padx=5)
         
         # Row 1: Config
+        # self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
+        # self.config_entry = ttk.Entry(cmd_frame, width=30)
+        # self.config_entry.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
+        # self.config_entry.insert(0, "/Meas/ECG/200/mV")
+        # self.config_button.grid_remove()
+        # self.config_entry.grid_remove()
+        ttk.Label(cmd_frame, text="2b.").grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
         self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
+        self.config_button.grid(row=1, column=1, padx=5, pady=5)
         self.config_entry = ttk.Entry(cmd_frame, width=30)
-        self.config_entry.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
+        self.config_entry.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
         self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        self.config_button.grid_remove()
-        self.config_entry.grid_remove()
+        ttk.Label(cmd_frame, text="(Optional: configure before starting)", 
+                font=("", 8), foreground="gray").grid(row=2, column=2, sticky=tk.W, padx=5)
         
         # Row 3: Start Logging
         ttk.Label(cmd_frame, text="3.").grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
@@ -308,7 +317,9 @@ class DataloggerGUI:
             logging.getLogger().setLevel(logging.DEBUG)
             
         try:
-            paths = self.config_entry.get().strip().split()
+            raw_input = self.config_entry.get().strip()
+            #paths = self.config_entry.get().strip().split()
+            paths = [p.strip() for p in re.split(r'[,\s]+', raw_input) if p.strip()]
 
             self.root.after(0, self.log_output, "Configure logging started...")
             self.root.after(0, self.status_var.set, "Configure logging started.")
@@ -328,7 +339,7 @@ class DataloggerGUI:
             self.root.after(0, self.log_output, output.getvalue())
             self.root.after(0, self.status_var.set, "Logging configured")
             self.logging_configured = True
-                
+               
         except Exception as e:
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
@@ -586,7 +597,13 @@ class DataloggerGUI:
                 if 'venv' in root_dir or 'site-packages' in root_dir:
                     continue  # Skip virtual environment and site-packages directories
                 for file in files:
-                    if file.endswith('.csv') and ('log_' in file.lower() or 'ecg' in file.lower()):
+                    # Only convert ECG-related CSV files to EDF
+                    file_lower = file.lower()
+                    is_ecg = (file_lower.endswith('.csv') and 
+                            ('measecg' in file_lower or 'measecgmv' in file_lower or 
+                            (file_lower.startswith('log_') and 'ecg' in file_lower)))
+                    
+                    if is_ecg:
                         csv_files_total += 1
                         csv_path = os.path.join(root_dir, file)
                         # Check if corresponding EDF already exists
