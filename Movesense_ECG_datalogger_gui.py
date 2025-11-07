@@ -51,6 +51,7 @@ class AdvancedConfigDialog:
         IMU_rates = [13, 26, 52, 104, 208, 416, 833]
         self.measurements = {
             "/Meas/Acc": IMU_rates,
+            "Algo/ECGRR": [],
             "/Meas/Gyro": IMU_rates,
             "/Meas/Ecg": [125, 128, 200, 250, 256, 500, 512],
             "/Meas/HR": [],
@@ -278,7 +279,7 @@ class DataloggerGUI:
         self.config_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
         self.config_entry.insert(0, "/Meas/ECG/200/mV")
         
-        ttk.Button(config_entry_frame, text="Advanced...", 
+        ttk.Button(config_entry_frame, text="Configure...", 
                   command=self.show_advanced_config, width=12).grid(row=0, column=1, padx=(5, 0))
         
         # Row 3: Start Logging
