@@ -69,11 +69,13 @@ class AdvancedConfigDialog:
         for i, (meas, rates) in enumerate(self.measurements.items()):
             row_frame = ttk.Frame(options_frame)
             row_frame.grid(row=i, column=0, sticky=(tk.W, tk.E), pady=2)
+            row_frame.columnconfigure(0, minsize=120)  
+            row_frame.columnconfigure(1, weight=0) 
             
             var = tk.BooleanVar(value=False)
             self.vars[meas] = var
             chk = ttk.Checkbutton(row_frame, text=meas, variable=var,
-                                  command=lambda m=meas: self.on_checkbox_toggle(m))  # NEW
+                                  command=lambda m=meas: self.on_checkbox_toggle(m))  
             chk.grid(row=0, column=0, sticky=tk.W)
 
             if rates:
@@ -82,7 +84,7 @@ class AdvancedConfigDialog:
                 cb = ttk.Combobox(row_frame, textvariable=rate_var,
                                   values=[str(r) for r in rates],
                                   width=6, state="readonly")
-                cb.grid(row=0, column=1, padx=10)
+                cb.grid(row=0, column=1, sticky=tk.W)  
                 cb.bind("<<ComboboxSelected>>", lambda e: self.update_config_text())
 
         # --- Counter & feedback ---
@@ -152,7 +154,11 @@ class AdvancedConfigDialog:
             if var.get():
                 rate = self.rate_vars.get(meas)
                 if rate:
-                    selected.append(f"{meas}/{rate.get()}")
+                    # Add /mV for ECG paths
+                    if "ECG" in meas.upper():
+                        selected.append(f"{meas}/{rate.get()}/mV")
+                    else:
+                        selected.append(f"{meas}/{rate.get()}")
                 else:
                     selected.append(meas)
         config_text = ", ".join(selected)
@@ -189,13 +195,14 @@ class DataloggerGUI:
         self.root.geometry("800x600")
 
         self.logging_configured = False
+        self.logging_active = False
         
         # Load and display the logo
         try:
             logo_path = os.path.join(os.path.dirname(__file__), "Movesense logomark white.png")
             logo_image = Image.open(logo_path)
             # Resize the image
-            logo_image = logo_image.resize((70, 45), Image.Resampling.LANCZOS)
+            logo_image = logo_image.resize((55, 35), Image.Resampling.LANCZOS)
             self.logo_photo = ImageTk.PhotoImage(logo_image)
             
             # Create and configure a label for the logo
@@ -234,7 +241,17 @@ class DataloggerGUI:
         )
         self.verbose_check.grid(row=0, column=2, padx=(10, 0))
         self.verbose_check.grid_remove()
-        
+
+        # Advanced UI checkbox 
+        self.advanced_ui_var = tk.BooleanVar()
+        self.advanced_ui_check = ttk.Checkbutton(
+            main_frame,
+            text="Advanced UI",
+            variable=self.advanced_ui_var,
+            command=self.toggle_advanced_ui
+        )
+        self.advanced_ui_check.grid(row=0, column=0, sticky=tk.NE, padx=(0, 10), pady=(0, 10))
+
         # Commands Section
         cmd_frame = ttk.LabelFrame(main_frame, text="Commands", padding="10")
         cmd_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -248,55 +265,54 @@ class DataloggerGUI:
         ttk.Label(cmd_frame, text="2.").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
         ttk.Button(cmd_frame, text="Connect", command=self.check_status, width=20).grid(row=0, column=1, padx=5, pady=5)
         ttk.Label(cmd_frame, text="Check device connection and info").grid(row=0, column=2, sticky=tk.W, padx=5)
-        
-        # Row 1: Config
-        # self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
-        # self.config_entry = ttk.Entry(cmd_frame, width=30)
-        # self.config_entry.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
-        # self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        # self.config_button.grid_remove()
-        # self.config_entry.grid_remove()
-        # ttk.Label(cmd_frame, text="2b.").grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
-        # self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
-        # self.config_button.grid(row=1, column=1, padx=5, pady=5)
-        # self.config_entry = ttk.Entry(cmd_frame, width=30)
-        # self.config_entry.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
-        # self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        # ttk.Label(cmd_frame, text="(Optional: configure before starting)", 
-        #         font=("", 8), foreground="gray").grid(row=2, column=2, sticky=tk.W, padx=5)
 
         # Row 1: Config with Advanced button
-        ttk.Label(cmd_frame, text="2b.").grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
+        self.config_label = ttk.Label(cmd_frame, text="3.")
+        self.config_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
+        self.config_label.grid_remove()  # Hide by default
+
         self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
         self.config_button.grid(row=1, column=1, padx=5, pady=5)
-        
+        self.config_button.grid_remove()  # Hide by default
+
         # Config entry frame with advanced button
-        config_entry_frame = ttk.Frame(cmd_frame)
-        config_entry_frame.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
-        config_entry_frame.columnconfigure(0, weight=1)
-        
-        self.config_entry = ttk.Entry(config_entry_frame, width=30)
+        self.config_entry_frame = ttk.Frame(cmd_frame)
+        self.config_entry_frame.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        self.config_entry_frame.grid_remove()  # Hide by default
+        self.config_entry_frame.columnconfigure(0, weight=1)
+
+        self.config_entry_var = tk.StringVar(value="/Meas/ECG/200/mV")
+        self.config_entry = ttk.Entry(self.config_entry_frame, textvariable=self.config_entry_var, width=30)
         self.config_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
-        self.config_entry.insert(0, "/Meas/ECG/200/mV")
-        
-        ttk.Button(config_entry_frame, text="Configure...", 
-                  command=self.show_advanced_config, width=12).grid(row=0, column=1, padx=(5, 0))
+
+        self.configure_button = ttk.Button(self.config_entry_frame, text="Configure...", 
+                command=self.show_advanced_config, width=12)
+        self.configure_button.grid(row=0, column=1, padx=(5, 0))
         
         # Row 3: Start Logging
-        ttk.Label(cmd_frame, text="3.").grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
+        self.start_label = ttk.Label(cmd_frame, text="3.")
+        self.start_label.grid(row=3, column=0, sticky=tk.W, padx=(0, 5))
         ttk.Button(cmd_frame, text="Start Logging", command=self.start_logging, width=20).grid(row=3, column=1, padx=5, pady=5)
-        ttk.Label(cmd_frame, text="Begin data logging").grid(row=3, column=2, sticky=tk.W, padx=5)
+
+        self.logging_status_label = ttk.Label(cmd_frame, text="Begin data logging")
+        self.logging_status_label.grid(row=3, column=2, sticky=tk.W, padx=5)
+
+        self.logging_status_label.config(text=f"Begin data logging with path {self.config_entry_var.get()}")
+        self.config_entry_var.trace_add("write", lambda *args: self.logging_status_label.config(
+            text=f"Begin data logging with path {self.config_entry_var.get()}"))
 
         # Compact separator between Start and Stop
         ttk.Separator(cmd_frame, orient='horizontal').grid(row=4, column=0, columnspan=3, sticky="ew", pady=10)
 
         # Row 3: Stop Logging
-        ttk.Label(cmd_frame, text="4.").grid(row=5, column=0, sticky=tk.W, padx=(0, 5))
+        self.stop_label = ttk.Label(cmd_frame, text="4.")
+        self.stop_label.grid(row=5, column=0, sticky=tk.W, padx=(0, 5))
         ttk.Button(cmd_frame, text="Stop Logging", command=self.stop_logging, width=20).grid(row=5, column=1, padx=5, pady=5)
         ttk.Label(cmd_frame, text="Stop the logging process").grid(row=5, column=2, sticky=tk.W, padx=5)
         
         # Row 4: Fetch
-        ttk.Label(cmd_frame, text="5.").grid(row=6, column=0, sticky=tk.W, padx=(0, 5))
+        self.fetch_label = ttk.Label(cmd_frame, text="5.")
+        self.fetch_label.grid(row=6, column=0, sticky=tk.W, padx=(0, 5))
         ttk.Button(cmd_frame, text="Load Data", command=self.fetch_data, width=20).grid(row=6, column=1, padx=5, pady=5)
 
         fetch_frame = ttk.Frame(cmd_frame)
@@ -354,6 +370,27 @@ class DataloggerGUI:
             config_text = ' '.join(dialog.result.split())
             self.config_entry.insert(0, config_text)
             self.log_output(f"Configuration updated: {config_text}\n")
+
+    def toggle_advanced_ui(self):
+        """Toggle visibility of advanced UI elements"""
+        if self.advanced_ui_var.get():
+            self.config_label.grid()
+            self.config_button.grid()
+            self.config_entry_frame.grid() 
+            self.verbose_check.grid()
+            self.force_check.grid()
+            self.start_label.config(text="4.")
+            self.stop_label.config(text="5.")
+            self.fetch_label.config(text="6.")
+        else:
+            self.config_label.grid_remove()
+            self.config_button.grid_remove()
+            self.config_entry_frame.grid_remove()
+            self.verbose_check.grid_remove()
+            self.force_check.grid_remove()
+            self.start_label.config(text="3.")
+            self.stop_label.config(text="4.")
+            self.fetch_label.config(text="5.")
     
     def log_output(self, message, newline=True):
         """Add message to output text widget"""
@@ -577,6 +614,12 @@ class DataloggerGUI:
         """Start logging"""
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
+
+        # Check if logging is already active
+        if self.logging_active:
+            messagebox.showinfo("Information", "Logging is already active.")
+            self.root.after(0, self.status_var.set, "Logging already active.")
+            return
         
         try:
             serial = self.serial_entry.get().strip()
@@ -662,6 +705,12 @@ class DataloggerGUI:
         """Stop logging"""
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
+
+        if not self.logging_active:
+            messagebox.showinfo("Information", "Logging is not active.")
+            self.root.after(0, self.status_var.set, "Logging is not active.")
+            return
+
         try:
 
             serial = self.serial_entry.get().strip()
@@ -673,7 +722,6 @@ class DataloggerGUI:
             self.logging_active = False
             # Capture stdout to show in GUI
             output = io.StringIO()
-            serial = self.serial_entry.get().strip()
             self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...")
             self.root.after(0, self.status_var.set, "Stopping logging.")
 
