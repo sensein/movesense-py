@@ -53,6 +53,66 @@ def convert_json_to_csv(input_file, output_file):
         else:
             process_regular_stream(stream_name, entries, output_file, relative_time, utc_time_str)
 
+def get_missing_value(stream_name):
+    """Return appropriate missing value based on stream type."""
+    if "ECG" in stream_name.upper():
+        return -1.5  # -1.5mV for ECG
+    else:
+        return 0.0  # Default
+
+def detect_missing_chunks(entries, stream_name, tolerance=1.8):
+    """
+    Detect missing chunks by analyzing timestamp gaps between consecutive chunks.
+    Uses the first two chunks to establish expected chunk interval.
+    
+    Returns:
+        tuple: (missing_chunks list, expected_chunk_dt)
+    """
+    if len(entries) < 2:
+        return [], 0
+
+    timestamps = []
+    for entry in entries[:10]:
+        ts = entry.get("Timestamp") or entry.get("timestamp")
+        if ts is not None:
+            timestamps.append(ts)
+        if len(timestamps) >= 2:
+            break
+
+    if len(timestamps) < 2:
+        print(f"  Warning: Cannot determine chunk interval for {stream_name}")
+        return [], 0
+    
+    expected_chunk_dt = timestamps[1] - timestamps[0]
+    print(f"  Expected chunk interval for {stream_name}: {expected_chunk_dt} ms")
+
+    missing_chunks = []
+    
+    # Scan through all chunks to find gaps 
+    for i in range(len(entries) - 1):
+        current_ts = entries[i].get("Timestamp") or entries[i].get("timestamp")
+        next_ts = entries[i + 1].get("Timestamp") or entries[i + 1].get("timestamp")
+
+        if current_ts is None or next_ts is None:
+            continue
+
+        gap = next_ts - current_ts
+
+        # If gap is significantly larger than expected, we have missing chunks
+        if gap > expected_chunk_dt * tolerance:
+            num_missing = int(round((gap - expected_chunk_dt) / expected_chunk_dt))
+            print(f"  Missing chunk(s) detected between index {i} and {i+1}")
+            print(f"    Current ts: {current_ts}, Next ts: {next_ts}, Gap: {gap:.1f}ms")
+            print(f"    Expected interval: {expected_chunk_dt:.1f}ms, Missing chunks: {num_missing}")
+
+            # Store info about where to insert and how many
+            for j in range(1, num_missing + 1):
+                expected_ts = int(current_ts + j * expected_chunk_dt)
+                missing_chunks.append((i, expected_ts))
+    
+    return missing_chunks, expected_chunk_dt
+
+
 def process_hr_stream(stream_name, entries, output_file, relative_time, utc_time_str):
     """Process heart rate (MeasHR) streams with RR intervals."""
     
@@ -97,6 +157,38 @@ def process_hr_stream(stream_name, entries, output_file, relative_time, utc_time
 
 def process_imu_stream(stream_name, entries, output_file, relative_time, utc_time_str):
     """Process IMU6/IMU9 streams which contain multiple sensor arrays."""
+
+    if len(entries) < 2:
+        print(f"Warning: Not enough entries in {stream_name} to estimate sampling interval.")
+        return
+
+    # --- Determine dt from the first two timestamps ---
+    first_ts = entries[0].get("Timestamp") or entries[0].get("timestamp")
+    second_ts = None
+    for entry in entries[1:]:
+        ts = entry.get("Timestamp") or entry.get("timestamp")
+        if ts is not None:
+            second_ts = ts
+            break
+
+    if first_ts is None or second_ts is None or second_ts <= first_ts:
+        print(f"Warning: Cannot determine sample interval for {stream_name}")
+        return
+
+    expected_chunk_dt = second_ts - first_ts
+    print(f"  Estimated chunk-to-chunk interval for {stream_name}: {expected_chunk_dt:.3f} ms")
+
+    # Try to estimate per-sample dt assuming similar sample counts in chunks
+    first_chunk = entries[0]
+    sample_counts = []
+    for v in first_chunk.values():
+        if isinstance(v, list):
+            sample_counts.append(len(v))
+    samples_per_chunk = max(sample_counts) if sample_counts else 1
+
+    dt = expected_chunk_dt / samples_per_chunk
+    freq_hz = 1000.0 / dt
+    print(f"  Estimated sample interval: {dt:.4f} ms  →  {freq_hz:.2f} Hz")
     
     # Collect data by sensor type (Acc, Gyro, Magn)
     sensor_data = {}
@@ -124,17 +216,6 @@ def process_imu_stream(stream_name, entries, output_file, relative_time, utc_tim
             
             if sensor_type not in sensor_data:
                 sensor_data[sensor_type] = []
-            
-            # Calculate dt for this chunk
-            prev_dt = 5.0  # default
-            if chunk_idx + 1 < len(entries):
-                next_ts = entries[chunk_idx + 1].get("Timestamp", 0)
-                if next_ts and next_ts > timestamp:
-                    dt = (next_ts - timestamp) / len(value)
-                else:
-                    dt = prev_dt
-            else:
-                dt = prev_dt
             
             # Add timestamped samples
             for i, sample in enumerate(value):
@@ -174,8 +255,15 @@ def process_imu_stream(stream_name, entries, output_file, relative_time, utc_tim
 
 def process_regular_stream(stream_name, entries, output_file, relative_time, utc_time_str):
     """Process regular streams (non-IMU)."""
+
+    # Only detect missing chunks for ECG streams
+    if "ECG" in stream_name.upper():
+        missing_chunks, expected_chunk_dt = detect_missing_chunks(entries, stream_name)
+    else:
+        missing_chunks, expected_chunk_dt = [], 0
+
     all_data = []
-    prev_dt = 5.0  # default sample step (ms)
+    prev_dt = None  # Will be calculated from first chunk
 
     for chunk_idx, entry in enumerate(entries):
         # --- Universal timestamp handling ---
@@ -228,21 +316,52 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
             continue
 
         n = len(values)
-        # --- Estimate dt between chunks ---
-        if chunk_idx + 1 < len(entries):
-            next_ts = entries[chunk_idx + 1].get("Timestamp") or 0
-            if next_ts and next_ts > timestamp:
-                dt = (next_ts - timestamp) / n
+        
+        # --- Calculate dt from first chunk or use previous ---
+        if prev_dt is None:
+            # First chunk - calculate dt from timestamp difference
+            if chunk_idx + 1 < len(entries):
+                next_ts = entries[chunk_idx + 1].get("Timestamp") or 0
+                if next_ts and next_ts > timestamp:
+                    dt = (next_ts - timestamp) / n
+                    prev_dt = dt
+                    print(f"  Calculated sample interval (dt) from first chunk: {dt:.4f} ms ({1000/dt:.2f} Hz)")
+                else:
+                    print(f"  Warning: Cannot calculate dt from first chunk, using 5.0ms default")
+                    dt = 5.0
+                    prev_dt = dt
+            else:
+                # Only one chunk exists
+                print(f"  Warning: Only one chunk, using 5.0ms default")
+                dt = 5.0
                 prev_dt = dt
+        else:
+            # Use calculated dt from previous chunks
+            if chunk_idx + 1 < len(entries):
+                next_ts = entries[chunk_idx + 1].get("Timestamp") or 0
+                if next_ts and next_ts > timestamp:
+                    dt = (next_ts - timestamp) / n
+                    prev_dt = dt
+                else:
+                    dt = prev_dt
             else:
                 dt = prev_dt
-        else:
-            dt = prev_dt
 
         # --- Append samples with timestamps ---
         for i, val in enumerate(values):
             ts = int(timestamp + i * dt)
             all_data.append((ts, val))
+
+        # After processing this chunk, check if we need to insert missing chunks (ECG only)
+        if "ECG" in stream_name.upper():
+            for missing_after_idx, missing_ts in missing_chunks:
+                if missing_after_idx == chunk_idx:
+                    missing_value = get_missing_value(stream_name)
+                    
+                    # Insert same number of samples as in current chunk
+                    for i in range(n):
+                        ts = int(missing_ts + i * dt)
+                        all_data.append((ts, missing_value))
 
     if not all_data:
         print(f"No valid samples found for {stream_name}, skipping.")
