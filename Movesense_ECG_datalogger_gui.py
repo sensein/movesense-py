@@ -187,13 +187,15 @@ class AdvancedConfigDialog:
         # ECG high rate warning
         if "ECG" in meas.upper() and rate > 200:
             warning_msg = (
-                f"Warning: High ECG sampling rate ({rate} Hz) may cause data saving issues."
+                f"Warning: High ECG sampling rate ({rate} Hz) may cause recording issues, "
+                f"especially when measuring multiple parameters simultaneously."
             )
 
         # IMU high rate warning (for Acc, Gyro, IMU6, IMU9, etc.)
         elif any(x in meas.upper() for x in ["IMU", "ACC", "GYRO"]) and rate > 104:
             warning_msg = (
-                f"Warning: High IMU sampling rate ({rate} Hz) may cause data saving issues."
+                f"Warning: High IMU sampling rate ({rate} Hz) may cause recording issues, "
+                f"especially when measuring multiple parameters simultaneously."
             )
 
         # Update label (black text, as you requested)
@@ -267,7 +269,7 @@ class AboutDialog:
         github_label = ttk.Label(contact_frame, text="github.com/movesense/flash-datalogger", 
                                  foreground="blue", cursor="hand2")
         github_label.grid(row=2, column=1, sticky=tk.W)
-        github_label.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/movesense/flash-datalogger"))
+        github_label.bind("<Button-1>", lambda e: webbrowser.open("https://bitbucket.org/movesense/python-datalogger-tool/src/master/"))
 
         # License information
         license_frame = ttk.LabelFrame(main_frame, text="License Information", padding="10")
@@ -832,7 +834,7 @@ class DataloggerGUI:
                 return
             
             # Stop the dots
-            self.logging_active = False
+            # self.logging_active = False
             # Capture stdout to show in GUI
             output = io.StringIO()
             self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...")
@@ -851,10 +853,11 @@ class DataloggerGUI:
             else:
                 self.root.after(0, self.log_output, f"Logging stopped on device {serial}")
                 self.root.after(0, self.status_var.set, "Logging stopped")
+                self.logging_active = False
 
         except Exception as e:
             import traceback
-            self.logging_active = False
+            #self.logging_active = False
             error_text = f"Error: {str(e)}\n\n{traceback.format_exc()}"
             self.root.after(0, self.log_output, error_text)
             self.root.after(0, self.status_var.set, "Error occurred")
