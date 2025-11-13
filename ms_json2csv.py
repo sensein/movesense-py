@@ -60,7 +60,7 @@ def get_missing_value(stream_name):
     else:
         return 0.0  # Default
 
-def detect_missing_chunks(entries, stream_name, tolerance=1.8):
+def detect_missing_chunks(entries, stream_name, tolerance=1.5):
     """
     Detect missing chunks by analyzing timestamp gaps between consecutive chunks.
     Uses the first two chunks to establish expected chunk interval.
@@ -110,7 +110,7 @@ def detect_missing_chunks(entries, stream_name, tolerance=1.8):
                 expected_ts = int(current_ts + j * expected_chunk_dt)
                 missing_chunks.append((i, expected_ts))
     
-    return missing_chunks, expected_chunk_dt
+    return missing_chunks
 
 
 def process_hr_stream(stream_name, entries, output_file, relative_time, utc_time_str):
@@ -254,22 +254,20 @@ def process_imu_stream(stream_name, entries, output_file, relative_time, utc_tim
         print(f"Saved {len(data)} samples to {stream_output}")
 
 def process_regular_stream(stream_name, entries, output_file, relative_time, utc_time_str):
-    """Process regular streams (non-IMU)."""
+    """Process regular (non-IMU) data streams, detect sample-level gaps, and fill missing areas with -1.5mV."""
 
-    # Only detect missing chunks for ECG streams
-    if "ECG" in stream_name.upper():
-        missing_chunks, expected_chunk_dt = detect_missing_chunks(entries, stream_name)
-    else:
-        missing_chunks, expected_chunk_dt = [], 0
+    if not entries:
+        print(f"No entries for {stream_name}, skipping.")
+        return
 
     all_data = []
-    prev_dt = None  # Will be calculated from first chunk
+    prev_dt = None  # Sample interval (ms)
+    print(f"\nProcessing stream: {stream_name}")
 
+    # Flatten all chunks into (timestamp, value) pairs ---
     for chunk_idx, entry in enumerate(entries):
-        # --- Universal timestamp handling ---
+        # Extract timestamp
         timestamp = entry.get("Timestamp") or entry.get("timestamp")
-
-        # If missing, try to find it inside nested dicts
         if timestamp is None:
             for v in entry.values():
                 if isinstance(v, dict) and "Timestamp" in v:
@@ -278,119 +276,113 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
                     break
 
         if timestamp is None:
-            print(f"Warning: chunk {chunk_idx} missing Timestamp, skipping")
+            print(f"Chunk {chunk_idx} missing timestamp, skipping.")
             continue
 
-        # --- Find the data field ---
-        data_keys = [k for k in entry.keys() if k.lower() not in ["timestamp"]]
-        if len(data_keys) == 0:
-            print(f"Warning: no data key in chunk {chunk_idx}: {list(entry.keys())}")
+        # --- Identify data field ---
+        data_keys = [k for k in entry.keys() if k.lower() != "timestamp"]
+        if not data_keys:
+            print(f"No data field in chunk {chunk_idx}.")
             continue
 
-        # Prefer known field names (Samples, Measurement, ArrayAcc, etc.)
         preferred_fields = ["Samples", "Measurement", "ArrayAcc", "ArrayGyro", "ArrayMag"]
         data_key = next((k for k in preferred_fields if k in entry), data_keys[0])
         data_array = entry[data_key]
 
-        # --- Normalize data to a list of values ---
+        # --- Normalize into list of numeric or [x,y,z] samples ---
         if isinstance(data_array, (int, float)):
             values = [data_array]
         elif isinstance(data_array, dict):
-            # Flatten nested vectors (x,y,z)
             if all(isinstance(v, (int, float)) for v in data_array.values()):
                 values = [[data_array.get("x", 0), data_array.get("y", 0), data_array.get("z", 0)]]
             else:
-                # Nested lists or other dicts
                 values = []
                 for v in data_array.values():
                     if isinstance(v, list):
                         values.extend(v)
         elif isinstance(data_array, list):
-            # Might be a list of scalars or dicts
             if len(data_array) > 0 and isinstance(data_array[0], dict) and all(k in data_array[0] for k in ("x", "y", "z")):
                 values = [[i["x"], i["y"], i["z"]] for i in data_array]
             else:
                 values = data_array
         else:
-            print(f"Warning: data not recognized in chunk {chunk_idx}, skipping")
+            print(f" Unsupported data format in chunk {chunk_idx}, skipping.")
             continue
 
         n = len(values)
-        
-        # --- Calculate dt from first chunk or use previous ---
-        if prev_dt is None:
-            # First chunk - calculate dt from timestamp difference
-            if chunk_idx + 1 < len(entries):
-                next_ts = entries[chunk_idx + 1].get("Timestamp") or 0
-                if next_ts and next_ts > timestamp:
-                    dt = (next_ts - timestamp) / n
-                    prev_dt = dt
-                    print(f"  Calculated sample interval (dt) from first chunk: {dt:.4f} ms ({1000/dt:.2f} Hz)")
-                else:
-                    print(f"  Warning: Cannot calculate dt from first chunk, using 5.0ms default")
-                    dt = 5.0
-                    prev_dt = dt
-            else:
-                # Only one chunk exists
-                print(f"  Warning: Only one chunk, using 5.0ms default")
-                dt = 5.0
-                prev_dt = dt
-        else:
-            # Use calculated dt from previous chunks
-            if chunk_idx + 1 < len(entries):
-                next_ts = entries[chunk_idx + 1].get("Timestamp") or 0
-                if next_ts and next_ts > timestamp:
-                    dt = (next_ts - timestamp) / n
-                    prev_dt = dt
-                else:
-                    dt = prev_dt
-            else:
-                dt = prev_dt
+        if n == 0:
+            continue
 
-        # --- Append samples with timestamps ---
+        # --- Estimate dt (per-sample interval) if not yet known ---
+        if prev_dt is None and chunk_idx + 1 < len(entries):
+            next_ts = entries[chunk_idx + 1].get("Timestamp") or entries[chunk_idx + 1].get("timestamp")
+            if next_ts and next_ts > timestamp:
+                prev_dt = (next_ts - timestamp) / n
+                print(f" Estimated sample interval: {prev_dt:.3f} ms ({1000/prev_dt:.2f} Hz)")
+            else:
+                prev_dt = 5.0  # fallback
+        elif prev_dt is None:
+            prev_dt = 5.0
+
+        # --- Append all samples with estimated timestamps ---
         for i, val in enumerate(values):
-            ts = int(timestamp + i * dt)
+            ts = int(timestamp + i * prev_dt)
             all_data.append((ts, val))
-
-        # After processing this chunk, check if we need to insert missing chunks (ECG only)
-        if "ECG" in stream_name.upper():
-            for missing_after_idx, missing_ts in missing_chunks:
-                if missing_after_idx == chunk_idx:
-                    missing_value = get_missing_value(stream_name)
-                    
-                    # Insert same number of samples as in current chunk
-                    for i in range(n):
-                        ts = int(missing_ts + i * dt)
-                        all_data.append((ts, missing_value))
 
     if not all_data:
         print(f"No valid samples found for {stream_name}, skipping.")
         return
 
+    # --- Sort samples by timestamp ---
     all_data.sort(key=lambda x: x[0])
 
+    # --- Fill missing gaps ---
+    filled_data = []
+    is_ecg = "ECG" in stream_name.upper()
+
+    filled_data.append(all_data[0])
+    prev_ts = all_data[0][0]
+
+    if is_ecg:
+        missing_value = get_missing_value(stream_name)
+        for ts, val in all_data[1:]:
+            gap = ts - prev_ts
+            if gap > prev_dt * 1.5:
+                num_missing = int((gap // prev_dt) - 1)
+                print(f" ECG gap detected: {gap:.1f}ms → inserting {num_missing} missing samples (from {prev_ts} to {ts})")
+                for i in range(num_missing):
+                    prev_ts += prev_dt
+                    filled_data.append((int(prev_ts), missing_value))
+            filled_data.append((ts, val))
+            prev_ts = ts
+    else:
+        # For non-ECG, just keep samples as-is (no gap filling)
+        filled_data.extend(all_data[1:])
+        print(" Non-ECG stream: skipping gap filling.")
+
+    print(f"  Total samples (after filling): {len(filled_data)}")
+
+    # --- Write output CSV ---
     base, _ = os.path.splitext(output_file)
     stream_output = f"{base}_{stream_name}.csv"
 
-    # --- Write CSV ---
-    print(f"Writing {len(all_data)} samples to {stream_output}")
     with open(stream_output, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
 
-        first_val = all_data[0][1]
+        first_val = filled_data[0][1]
         if isinstance(first_val, list) and len(first_val) == 3:
             header = ["Timestamp_ms", "X", "Y", "Z", "RelativeTime", relative_time, "UTC", utc_time_str]
         else:
             header = ["Timestamp_ms", "Value", "RelativeTime", relative_time, "UTC", utc_time_str]
         writer.writerow(header)
 
-        for ts, val in all_data:
+        for ts, val in filled_data:
             if isinstance(val, list):
                 writer.writerow([ts] + [f"{v:.6f}" for v in val])
             else:
                 writer.writerow([ts, f"{val:.6f}"])
 
-    print(f"Saved {len(all_data)} samples to {stream_output}")
+    print(f"Saved {len(filled_data)} samples to {stream_output}\n")
 
 def main():
     if len(sys.argv) < 3:

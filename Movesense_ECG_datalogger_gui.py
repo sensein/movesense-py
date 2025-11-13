@@ -12,6 +12,7 @@ import io
 import re
 import json
 import traceback
+import webbrowser
 from contextlib import redirect_stdout
 import datalogger_tool as tool  
 
@@ -20,7 +21,7 @@ from tkinter import ttk, scrolledtext
 
 class AdvancedConfigDialog:
     """Dialog for advanced configuration options"""
-    MAX_SELECTIONS = 3  # NEW: Maximum allowed selections
+    MAX_SELECTIONS = 3  
 
     def __init__(self, parent, current_config):
         self.result = None
@@ -85,7 +86,8 @@ class AdvancedConfigDialog:
                                   values=[str(r) for r in rates],
                                   width=6, state="readonly")
                 cb.grid(row=0, column=1, sticky=tk.W)  
-                cb.bind("<<ComboboxSelected>>", lambda e: self.update_config_text())
+                #cb.bind("<<ComboboxSelected>>", lambda e: self.update_config_text())
+                cb.bind("<<ComboboxSelected>>", lambda e, m=meas: self.on_rate_change(m))
 
         # --- Counter & feedback ---
         counter_frame = ttk.Frame(main_frame)
@@ -167,6 +169,39 @@ class AdvancedConfigDialog:
         self.config_text.insert("1.0", config_text)
         self.config_text.configure(state='disabled')
 
+    def on_rate_change(self, meas):
+        """Handle rate changes and show warning if rates are too high"""
+        self.update_config_text()  # keep normal config update
+
+        rate_var = self.rate_vars.get(meas)
+        if not rate_var:
+            return
+
+        try:
+            rate = int(rate_var.get())
+        except ValueError:
+            rate = 0
+
+        warning_msg = ""
+
+        # ECG high rate warning
+        if "ECG" in meas.upper() and rate > 200:
+            warning_msg = (
+                f"Warning: High ECG sampling rate ({rate} Hz) may cause data saving issues."
+            )
+
+        # IMU high rate warning (for Acc, Gyro, IMU6, IMU9, etc.)
+        elif any(x in meas.upper() for x in ["IMU", "ACC", "GYRO"]) and rate > 104:
+            warning_msg = (
+                f"Warning: High IMU sampling rate ({rate} Hz) may cause data saving issues."
+            )
+
+        # Update label (black text, as you requested)
+        self.warning_label.configure(text=warning_msg, foreground="black")
+
+        # Refresh counter as well
+        self.update_counter_label()
+
     def reset_default(self):
         for meas in self.vars:
             self.vars[meas].set(False)
@@ -187,6 +222,81 @@ class AdvancedConfigDialog:
         """Collect selected options and sample rates"""
         self.result = self.config_text.get("1.0", tk.END).strip()
         self.dialog.destroy()
+
+class AboutDialog:
+    """Dialog for About information and licenses"""
+    def __init__(self, parent):
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("About Movesense Flash Datalogger Tool")
+        self.dialog.geometry("600x500")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(self.dialog, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.dialog.columnconfigure(0, weight=1)
+        self.dialog.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
+        
+        # Title
+        ttk.Label(main_frame, text="Movesense Flash Datalogger Tool", 
+                  font=("", 14, "bold")).grid(row=0, column=0, pady=(0, 10))
+        
+        # Contact info
+        contact_frame = ttk.LabelFrame(main_frame, text="Information", padding="10")
+        contact_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # --- Email ---
+        ttk.Label(contact_frame, text="Email: ").grid(row=0, column=0, sticky=tk.W)
+        email_label = ttk.Label(contact_frame, text="info@movesense.com", 
+                               foreground="blue", cursor="hand2")
+        email_label.grid(row=0, column=1, sticky=tk.W)
+        email_label.bind("<Button-1>", lambda e: webbrowser.open("mailto:info@movesense.com"))
+
+        # --- Website ---
+        ttk.Label(contact_frame, text="Website: ").grid(row=1, column=0, sticky=tk.W)
+        website_label = ttk.Label(contact_frame, text="www.movesense.com", 
+                                  foreground="blue", cursor="hand2")
+        website_label.grid(row=1, column=1, sticky=tk.W)
+        website_label.bind("<Button-1>", lambda e: webbrowser.open("https://www.movesense.com"))
+
+        # --- GitHub Repository ---
+        ttk.Label(contact_frame, text="Git Repository: ").grid(row=2, column=0, sticky=tk.W)
+        github_label = ttk.Label(contact_frame, text="github.com/movesense/flash-datalogger", 
+                                 foreground="blue", cursor="hand2")
+        github_label.grid(row=2, column=1, sticky=tk.W)
+        github_label.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/movesense/flash-datalogger"))
+
+        # License information
+        license_frame = ttk.LabelFrame(main_frame, text="License Information", padding="10")
+        license_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        license_frame.columnconfigure(0, weight=1)
+        license_frame.rowconfigure(0, weight=1)
+        
+        license_text = scrolledtext.ScrolledText(license_frame, height=15, width=70, wrap=tk.WORD)
+        license_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Add license text
+        licenses = """Movesense Flash Datalogger Tool\n\n
+This tool is provided under the MIT License.
+Copyright (c) 2025 Movesense.
+"""
+        
+        license_text.insert("1.0", licenses)
+        license_text.configure(state='disabled')
+        
+        # Close button
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=3, column=0, sticky=tk.E, pady=(10, 0))
+        ttk.Button(button_frame, text="Close", command=self.dialog.destroy).grid(row=0, column=0)
+        
+        # Center dialog on parent
+        self.dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.dialog.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.dialog.winfo_height()) // 2
+        self.dialog.geometry(f"+{x}+{y}")
 
 class DataloggerGUI:
     def __init__(self, root):
@@ -335,23 +445,26 @@ class DataloggerGUI:
         
         # Clear output button
         ttk.Button(output_frame, text="Clear Output", command=self.clear_output).grid(row=1, column=0, pady=(5, 0))
-        
+
         # Status bar
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E))
 
-        # Erase Memory
-        erase_frame = ttk.Frame(main_frame, padding="5")
-        erase_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))  
-        erase_frame.columnconfigure(0, weight=1)  
+        # Erase Memory and About button frame
+        bottom_frame = ttk.Frame(main_frame, padding="5")
+        bottom_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))  
+        bottom_frame.columnconfigure(0, weight=1)
+        
+        # About button on the left
+        ttk.Button(bottom_frame, text="About", command=self.show_about, width=10).grid(row=0, column=0, sticky=tk.W)
 
-        # Erase button
-        ttk.Button(erase_frame, text="Erase Memory", command=self.erase_memory, width=20).grid(row=0, column=1, padx=5, sticky=tk.E)
+        # Erase button on the right
+        ttk.Button(bottom_frame, text="Erase Memory", command=self.erase_memory, width=20).grid(row=0, column=1, padx=5, sticky=tk.E)
 
         # Force checkbox 
         self.force_var = tk.BooleanVar()
-        self.force_check = ttk.Checkbutton(erase_frame, text="Force (skip confirmation)", variable=self.force_var)
+        self.force_check = ttk.Checkbutton(bottom_frame, text="Force (skip confirmation)", variable=self.force_var)
         self.force_check.grid(row=0, column=2, padx=5, sticky=tk.E)
         self.force_check.grid_remove()
         
@@ -1035,6 +1148,10 @@ class DataloggerGUI:
         if directory:
             self.output_entry.delete(0, tk.END)
             self.output_entry.insert(0, directory)
+    
+    def show_about(self):
+        """Show the About dialog"""
+        AboutDialog(self.root)
 
 root = tk.Tk()
 app = DataloggerGUI(root)
