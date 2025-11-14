@@ -833,9 +833,6 @@ class DataloggerGUI:
                 messagebox.showwarning("Warning", "Please enter a valid serial number")
                 return
             
-            # Stop the dots
-            # self.logging_active = False
-            # Capture stdout to show in GUI
             output = io.StringIO()
             self.root.after(0, self.log_output, f"\nStopping logging on device {serial}...")
             self.root.after(0, self.status_var.set, "Stopping logging.")
