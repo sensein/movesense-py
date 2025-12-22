@@ -349,10 +349,11 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
             gap = ts - prev_ts
             if gap > prev_dt * 1.5:
                 num_missing = int((gap // prev_dt) - 1)
-                print(f" ECG gap detected: {gap:.1f}ms → inserting {num_missing} missing samples (from {prev_ts} to {ts})")
-                for i in range(num_missing):
-                    prev_ts += prev_dt
-                    filled_data.append((int(prev_ts), missing_value))
+                if num_missing > 0:
+                    print(f" ECG gap detected: {gap:.1f}ms → inserting {num_missing} missing samples (from {prev_ts} to {ts})")
+                    for i in range(num_missing):
+                        prev_ts += prev_dt
+                        filled_data.append((int(prev_ts), missing_value))
             filled_data.append((ts, val))
             prev_ts = ts
     else:
