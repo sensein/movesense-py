@@ -5,6 +5,7 @@ from async_tkinter_loop import async_handler, async_mainloop
 from csv2edf import csv_to_edf_plus
 from ms_json2csv import convert_json_to_csv
 from PIL import Image, ImageTk
+from datetime import datetime, UTC
 import subprocess
 import os
 import sys
@@ -579,8 +580,9 @@ class DataloggerGUI:
                 utc_time = time_detailed.get("utcTime", "")
                 if utc_time:
                     utc_time = int(utc_time)
-                    from datetime import datetime
-                    utc_time_str = datetime.utcfromtimestamp(utc_time / 1000000).strftime('%Y-%m-%d_%H%M%S')
+                    
+                    #utc_time_str = datetime.utcfromtimestamp(utc_time / 1000000).strftime('%Y-%m-%d_%H%M%S')
+                    utc_time_str = datetime.fromtimestamp(utc_time / 1_000_000,tz=UTC).strftime('%Y-%m-%d_%H%M%S')
                     return utc_time_str
         except Exception as e:
             self.root.after(0, self.log_output, f"Error extracting UTC time from JSON: {str(e)}\n")
