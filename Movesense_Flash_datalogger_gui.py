@@ -6,6 +6,7 @@ from csv2edf import csv_to_edf_plus
 from ms_json2csv import convert_json_to_csv
 from PIL import Image, ImageTk
 from datetime import datetime, UTC, timezone
+from packaging import version
 import subprocess
 import os
 import sys
@@ -721,8 +722,78 @@ class DataloggerGUI:
             # --- Handle tool errors ---
             if isinstance(status, dict) and not status.get("success", True):
                 error_msg = status.get("error", "Status fetch failed (unknown error).")
+
+                # Check if it's a characteristic UUID error
+                if "characteristic" in error_msg.lower() or "uuid" in error_msg.lower():
+                    messagebox.showerror(
+                        "Characteristic UUID Error",
+                        f"The firmware on the sensor does not have GSP protocol.\n"
+                        f"Please update the sensor to latest default firmware.\n"
+                    )
+                else:
+                    messagebox.showerror(
+                        "Connection Error",
+                        f"Failed to connect to device.\n\n{error_msg}"
+                    )
+
                 self.root.after(0, self.log_output, f"Error during status fetch: {error_msg}\n")
                 self.root.after(0, self.status_var.set, "Status fetch failed.")
+                self.device_connected = False
+                self.update_button_states()
+                return
+            
+            # Check if product name is Movesense 
+            product_name = status.get('product_name', '')
+            if product_name != 'Movesense':
+                messagebox.showerror(
+                    "Incompatible Device", 
+                    f"Please use a Movesense Flash sensor."
+                )
+                self.root.after(0, self.log_output, 
+                    f"Error: Incompatible device detected.\n")
+                self.root.after(0, self.status_var.set, "Incompatible device.")
+                self.device_connected = False
+                self.update_button_states()
+                return
+            
+            # Check if app verison supports datalogging
+            app_version = status.get('app_version', '')
+
+            # Handle non-standard responses
+            if not app_version or app_version.lower() == 'hello':
+                messagebox.showerror(
+                    "Unsupported App Version", 
+                    f"Movesense Flash Datalogger Tool requires app version 1.0.1 or higher (release 2.3.1).\n"
+                    f"Please update the device firmware."
+                )
+                self.root.after(0, self.log_output,
+                    f"Error: Unsupported or unknown app version detected.\n")
+                self.root.after(0, self.status_var.set, "Unsupported app version.")
+                self.device_connected = False
+                self.update_button_states()
+                return
+            # Parse version and compare
+            try:
+                if version.parse(app_version) < version.parse('1.0.1'):
+                    messagebox.showerror(
+                        "Unsupported App Version",
+                        f"Movesense Flash Datalogger Tool requires app version 1.0.1 or higher (release 2.3.1).\n"
+                        f"Please update the device firmware."
+                    )
+                    self.root.after(0, self.log_output,
+                        f"Error: Unsupported app version detected.\n")
+                    self.root.after(0, self.status_var.set, "Unsupported app version.")
+                    self.device_connected = False
+                    self.update_button_states()
+                    return
+            except Exception as e:
+                messagebox.showerror(
+                    "Invalid App Version",
+                    f"Please ensure device firmware is up to date. Detected app version: {app_version}"
+                )
+                self.root.after(0, self.log_output,
+                    f"Error: Invalid app version format detected: {app_version}\n")
+                self.root.after(0, self.status_var.set, "Invalid app version.")
                 self.device_connected = False
                 self.update_button_states()
                 return
