@@ -6,7 +6,7 @@ from datetime import datetime
 import sys
 import os
 
-def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='mV', scale_factor=1):
+def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='mV', scale_factor=1, recording_start=None):
     """
     Convert a CSV file with single ECG channel data to EDF+ format.
     
@@ -145,12 +145,13 @@ def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='m
         'equipment': 'CSV Converter',
         'admincode': '',
         'sex': '',
-        'startdate': datetime.now(),
+        'startdate': recording_start,
         'birthdate': ''
     }
 
     # Create EDF+ file
     print(f"\nCreating EDF+ file: {edf_filename}")
+    print(f"Recording start time: {recording_start.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Writing {len(ecg_data)} samples...")
     
     try:
