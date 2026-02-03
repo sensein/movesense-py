@@ -337,8 +337,8 @@ class DataloggerGUI:
         main_frame.columnconfigure(0, weight=1)
         
         # Serial Numbers Section
-        serial_frame = ttk.LabelFrame(main_frame, text="Device Serial Number", padding="10")
-        serial_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        serial_frame = ttk.LabelFrame(main_frame, text="Device Serial Number", padding="5")
+        serial_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         serial_frame.columnconfigure(1, weight=1)
         
         ttk.Label(serial_frame, text="1.    Serial Number:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
@@ -368,8 +368,8 @@ class DataloggerGUI:
         self.advanced_ui_check.grid(row=0, column=0, sticky=tk.NE, padx=(0, 10), pady=(0, 10))
 
         # Commands Section
-        cmd_frame = ttk.LabelFrame(main_frame, text="Commands", padding="10")
-        cmd_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        cmd_frame = ttk.LabelFrame(main_frame, text="Commands", padding="5")
+        cmd_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
 
         # Configure columns
         cmd_frame.columnconfigure(0, minsize=25)   # narrow column for numbers
@@ -435,6 +435,26 @@ class DataloggerGUI:
         self.fetch_button = ttk.Button(cmd_frame, text="Load Data", command=self.fetch_data, width=20, state='disabled')
         self.fetch_button.grid(row=6, column=1, padx=5, pady=5)
 
+        # Progress section
+        progress_frame = ttk.LabelFrame(main_frame, text="Download Progress", padding="5")
+        progress_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+
+        # Overall progress
+        ttk.Label(progress_frame, text="Overall:").grid(row=0, column=0, sticky=tk.W)
+        self.overall_progress = ttk.Progressbar(progress_frame, length=400, mode='determinate')
+        self.overall_progress.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.overall_label = ttk.Label(progress_frame, text="")
+        self.overall_label.grid(row=0, column=2, sticky=tk.W)
+
+        # Current file progress
+        ttk.Label(progress_frame, text="Current File:").grid(row=1, column=0, sticky=tk.W)
+        self.file_progress = ttk.Progressbar(progress_frame, length=400, mode='determinate')
+        self.file_progress.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.file_label = ttk.Label(progress_frame, text="")
+        self.file_label.grid(row=1, column=2, sticky=tk.W)
+
+        progress_frame.columnconfigure(1, weight=1)
+
         self.logging_serial = None
         self.serial_entry.bind('<KeyRelease>', self.on_serial_change)
 
@@ -449,11 +469,11 @@ class DataloggerGUI:
         ttk.Button(fetch_frame, text="Browse...", command=self.browse_output).grid(row=0, column=2, padx=(5, 0))
         
         # Output Section
-        output_frame = ttk.LabelFrame(main_frame, text="Output", padding="10")
-        output_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        output_frame = ttk.LabelFrame(main_frame, text="Output", padding="5")
+        output_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 5))
         output_frame.columnconfigure(0, weight=1)
-        output_frame.rowconfigure(0, weight=1)
-        self.output_text = scrolledtext.ScrolledText(output_frame, height=10, width=80, wrap=tk.WORD, state='disabled')
+        output_frame.rowconfigure(0, weight=0)
+        self.output_text = scrolledtext.ScrolledText(output_frame, height=5, wrap=tk.WORD, state='disabled')
         self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Clear output button
@@ -462,11 +482,11 @@ class DataloggerGUI:
         # Status bar
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E))
+        status_bar.grid(row=4, column=0, sticky=(tk.W, tk.E))
 
         # Erase Memory and About button frame
         bottom_frame = ttk.Frame(main_frame, padding="5")
-        bottom_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))  
+        bottom_frame.grid(row=5, column=0, sticky=(tk.W, tk.E))  
         bottom_frame.columnconfigure(0, weight=1)
         
         # About button on the left
@@ -1068,15 +1088,59 @@ class DataloggerGUI:
             self.root.after(0, self.log_output, f"\nLoading data from device {serial}.")
             self.root.after(0, self.status_var.set, "Loading data from device")
 
+            # Reset progress bars
+            self.root.after(0, self.reset_progress_bars)
+
             # Set logging active flag 
             self.fetching_active = True
             self.root.after(2000, self.logging_data)
 
             # Capture stdout to show in GUI
             output = io.StringIO()
+
+            # Progress tracking variables
+            self.total_logs = 0
+
+            def progress_callback(bytes_downloaded, log_id, total_size, current_log_num=1, total_log_count=1, file_sizes=None, bytes_downloaded_so_far=0, total_bytes=0):
+                #self.root.after(0, self.status_var.set, f"Fetching data... {count} bytes")
+                # Set total logs if not set (first callback)
+                if self.total_logs == 0 and total_log_count > 0:
+                    self.total_logs = total_log_count
+                    self.total_bytes = total_bytes
+
+                # if file_sizes:
+                #     self.total_bytes = sum(file_sizes)
+                #     self.bytes_downloaded_so_far = 0
+                # else:
+                #     self.total_bytes = 0
+
+                # Update current file progress
+                if total_size > 0:
+                    file_percent = min(100, (bytes_downloaded / total_size) * 100)
+                    self.root.after(0, self.update_file_progress, 
+                        file_percent, bytes_downloaded, total_size, log_id)
+                
+                # Update overall progress
+                if self.total_logs > 0:
+                    #bytes_from_completed_files = self.bytes_downloaded_so_far
+                    total_bytes_downloaded = bytes_downloaded_so_far + bytes_downloaded
+                    overall_percent = (total_bytes_downloaded / self.total_bytes) * 100
+                    #overall_percent = ((current_log_num - 1 + (bytes_downloaded / max(total_size, 1))) / self.total_logs) * 100
+                    self.root.after(0, self.update_overall_progress, 
+                        overall_percent, current_log_num, self.total_logs)
+                    
+                else:
+                    # Fallback to file-count-based progress if sizes unavailable
+                    overall_percent = ((current_log_num - 1 + (bytes_downloaded / max(total_size, 1))) / self.total_logs) * 100
+                    self.root.after(0, self.update_overall_progress, 
+                        overall_percent, current_log_num, self.total_logs)
+                    
+                self.root.after(0, self.status_var.set, 
+                    f"Fetching log {log_id}: {bytes_downloaded} / {total_size} bytes")
+
             with redirect_stdout(output):
                 # Step 1: Fetch data
-                result = await tool.fetch_data(serial=serial, args=None, output_dir=output_dir)
+                result = await tool.fetch_data(serial=serial, args=None, output_dir=output_dir, progress_callback=progress_callback)
                 self.logging_configured = False
                 
             # Update GUI with fetch output
@@ -1337,6 +1401,27 @@ class DataloggerGUI:
     def show_about(self):
         """Show the About dialog"""
         AboutDialog(self.root)
+
+    def reset_progress_bars(self):
+        """Reset progress bars"""
+        self.overall_progress['value'] = 0
+        self.file_progress['value'] = 0
+        self.overall_label.config(text="")
+        self.file_label.config(text="")
+
+    def update_file_progress(self, percent, downloaded, total, log_id):
+        """Update file progress bar"""
+        self.file_progress['value'] = percent
+        self.file_label.config(
+        text=f"Log {log_id}: {downloaded:,} / {total:,} bytes ({percent:.1f}%)"
+        )
+
+    def update_overall_progress(self, percent, current, total):
+        """Update overall progress bar"""
+        self.overall_progress['value'] = percent
+        self.overall_label.config(
+            text=f"Files: {current} / {total} ({percent:.1f}%)"
+        )
 
 root = tk.Tk()
 app = DataloggerGUI(root)
