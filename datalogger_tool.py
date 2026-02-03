@@ -53,42 +53,101 @@ async def stop_logging(serial, args):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
-async def fetch_data(serial, args, output_dir=None):
+async def fetch_data(serial, args, output_dir=None, progress_callback=None):
     """Fetch data from a specific device."""
     fetched_files = []
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
             # Use output directory if provided
+            logs = await sensor.get_logs()
+            print(f"DEBUG: get_logs returned: {logs}")
+            if not logs.get('success'):
+                return {'success': False, 'error': 'Failed to get log entries'}
             
+            entries = logs.get('entries', [])
+            total_logs = len(entries)
+            logging.info(f"Found {total_logs} logs on device {serial}")
+
+            # Calculate total bytes across all files
+            file_sizes = [entry.get('size', 0) for entry in entries]
+            total_bytes = sum(file_sizes)
+            bytes_downloaded_so_far = 0
+
             log_id = 1 # start with log id 1, fetch all the logs on sensor
-            while True:
+            
+            for idx, entry in enumerate(entries, 1):
                 start_time = datetime.now()
-                logging.info(f"Fetching log {log_id} from device {serial}")
+                logging.info(f"Fetching log {log_id} from device {serial} ({idx}/{total_logs})")
+                
                 output_file = None
                 if output_dir:
                     output_file = f"{output_dir}/Movesense_log_{log_id}_{serial}.sbem"
                 elif hasattr(args, 'output') and args.output:
                     output_file = f"{args.output}/Movesense_log_{log_id}_{serial}.sbem"
-
-                result = await sensor.fetch_data(log_id=log_id, output_file=output_file)
+                
+                total_size = entry.get('size', 0)
+                
+                def progress_callback_inner(count):
+                    if progress_callback:
+                        logging.debug(f"Progress callback: bytes={count}, log_id={log_id}, total_size={total_size}, idx={idx}, total_logs={total_logs}")
+                        progress_callback(count, log_id, total_size, idx, total_logs, file_sizes = file_sizes, bytes_downloaded_so_far = bytes_downloaded_so_far, total_bytes = total_bytes)
+                
+                result = await sensor.fetch_data(
+                    log_id=log_id, 
+                    output_file=output_file, 
+                    progress_callback=progress_callback_inner
+                )
 
                 if not result.get('success', False):
-                    logging.info(f"No more logs to fetch (or error occurred)")
+                    logging.warning(f"Failed to fetch log {log_id}")
                     if 'status_code' in result and result['status_code'] != 404:
                         logging.error(f"Status {result['status_code']}: {result.get('error', 'Unknown error')}")
-                    else:
-                        result = {'success': True, 'message': f'Fetched {log_id - 1} logs'}
                     break
                 else:
                     end_time = datetime.now()
                     duration = (end_time - start_time).total_seconds()
-                    logging.info(f"Fetched log {log_id}, size {result.get('size', 0)/1024} kB in {duration:.2f} seconds. speed: {result.get('size', 0)/1024/duration:.2f} kB/s")
+                    size_kb = result.get('size', 0) / 1024
+                    speed = size_kb / duration if duration > 0 else 0
+                    logging.info(f"Fetched log {log_id}, size {size_kb:.2f} kB in {duration:.2f} seconds. speed: {speed:.2f} kB/s")
 
-                filename = result.get('filename')
-                if filename:
-                    fetched_files.append(filename)
-    
+                    filename = result.get('filename')
+                    if filename:
+                        fetched_files.append(filename)
+
+                    bytes_downloaded_so_far += total_size
+        
                 log_id += 1
+            # while True:
+            #     start_time = datetime.now()
+            #     logging.info(f"Fetching log {log_id} from device {serial}")
+            #     output_file = None
+            #     if output_dir:
+            #         output_file = f"{output_dir}/Movesense_log_{log_id}_{serial}.sbem"
+            #     elif hasattr(args, 'output') and args.output:
+            #         output_file = f"{args.output}/Movesense_log_{log_id}_{serial}.sbem"
+                
+            #     def progress_callback_inner(count):
+            #         if progress_callback:
+            #             progress_callback(count, log_id, 99)
+            #     result = await sensor.fetch_data(log_id=log_id, output_file=output_file, progress_callback=progress_callback_inner, total_size=logs.get(log_id, 0))
+
+            #     if not result.get('success', False):
+            #         logging.info(f"No more logs to fetch (or error occurred)")
+            #         if 'status_code' in result and result['status_code'] != 404:
+            #             logging.error(f"Status {result['status_code']}: {result.get('error', 'Unknown error')}")
+            #         else:
+            #             result = {'success': True, 'message': f'Fetched {log_id - 1} logs'}
+            #         break
+            #     else:
+            #         end_time = datetime.now()
+            #         duration = (end_time - start_time).total_seconds()
+            #         logging.info(f"Fetched log {log_id}, size {result.get('size', 0)/1024} kB in {duration:.2f} seconds. speed: {result.get('size', 0)/1024/duration:.2f} kB/s")
+
+            #     filename = result.get('filename')
+            #     if filename:
+            #         fetched_files.append(filename)
+    
+            #     log_id += 1
 
             # Reset sensor to avoid the 409 error on Sensor firmware <= 2.3.1
             logging.info(f"Resetting device {serial} to system mode <5>")

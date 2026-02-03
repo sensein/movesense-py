@@ -434,8 +434,124 @@ class SensorCommand:
                 'success': False,
                 'error': f'Unexpected response code: {response.get("response_code")}'
             }
-    
-    async def fetch_data(self, log_id: int = 1, output_file: Optional[str] = None) -> Dict[str, Any]:
+        
+    def parse_logbook_entries(self, raw_data: bytes) -> list[dict]:
+        """Parse logbook entries from raw data bytes."""
+        entries = []
+        entry_size = 16  
+        header_size = 5
+        
+        if not raw_data:
+            logging.debug("No raw data to parse")
+            return entries
+        
+        logging.debug(f"Raw data length: {len(raw_data)} bytes")
+        logging.debug(f"Raw data (hex): {raw_data.hex()}")
+
+        if len(raw_data) < header_size:
+            logging.warning(f"Raw data too short (less than {header_size} bytes)")
+            return entries
+        
+        # Skip header and get actual entry data
+        entry_data = raw_data[header_size:]
+        logging.debug(f"Entry data length after header: {len(entry_data)} bytes")
+        logging.debug(f"Entry data (hex): {entry_data.hex()}")
+        
+        if len(entry_data) % entry_size != 0:
+            logging.warning(f"Entry data length ({len(entry_data)}) is not a multiple of {entry_size}")
+            logging.warning(f"Remaining bytes: {len(entry_data) % entry_size}")
+
+        offset = 0
+        entry_index = 0
+        while offset + entry_size <= len(entry_data):
+            entry_bytes = entry_data[offset:offset + entry_size]
+            
+            # Parse fields
+            entry_id = int.from_bytes(entry_bytes[0:4], byteorder='little', signed=False)
+            last_modified = int.from_bytes(entry_bytes[4:8], byteorder='little', signed=False)
+            size = int.from_bytes(entry_bytes[8:16], byteorder='little', signed=False)
+
+            entry = {
+                'id': entry_id,
+                'last_modified': last_modified,
+                'size': size
+            }
+            
+            logging.debug(f"Entry {entry_index}: ID={entry_id}, Last Modified={last_modified}, Size={size}")
+            logging.debug(f"  Raw bytes: {entry_bytes.hex()}")
+
+            entries.append(entry)
+            offset += entry_size
+            entry_index += 1
+
+            # Check if there are leftover bytes
+        if offset < len(entry_data):
+            leftover = entry_data[offset:]
+            logging.warning(f"Leftover bytes at end: {leftover.hex()} ({len(leftover)} bytes)")
+        
+        logging.debug(f"Total entries parsed: {len(entries)}")
+        return entries
+
+    async def get_logs(self) -> dict:
+        """Get logbook entries from sensor."""
+        command = bytearray([GSP_CMD_GET, 109]) + b'/Mem/Logbook/entries\x00'
+        response = await self.send_command(command)
+        
+        if response.get('response_code') == GSP_RESP_COMMAND_RESPONSE:
+            status_code = response.get('status_code', 0)
+            raw_data = response.get('raw_data')
+            
+            if status_code == 200:
+                try:
+                    # Parse the logbook entries
+                    entries = self.parse_logbook_entries(raw_data)
+                    logging.debug(f"Parsed {len(entries)} logbook entries")
+                    
+                    return {
+                        'success': True,
+                        'status_code': status_code,
+                        'entries': entries,
+                        'raw_data': raw_data
+                    }
+                except Exception as e:
+                    logging.error(f"Failed to parse logbook entries: {e}")
+                    return {
+                        'success': False,
+                        'status_code': status_code,
+                        'error': f'Parsing failed: {str(e)}',
+                        'raw_data': raw_data
+                    }
+            else:
+                return {
+                    'success': False,
+                    'status_code': status_code,
+                    'raw_data': raw_data
+                }
+        else:
+            return {
+                'success': False,
+                'error': f'Unexpected response code: {response.get("response_code")}'
+            }
+        
+    # async def get_logs(self) -> list[Any]:
+    #     """Get logbook entries from sensor."""
+    #     command = bytearray([GSP_CMD_GET, 123]) + b'/Mem/Logbook/entries\x00'
+    #     response = await self.send_command(command)
+        
+    #     if response.get('response_code') == GSP_RESP_COMMAND_RESPONSE:
+    #         status_code = response.get('status_code', 0)
+    #         return {
+    #             'success': status_code == 200,
+    #             'status_code': status_code,
+    #             'raw_data': response.get('raw_data')
+    #         }
+    #     else:
+    #         return {
+    #             'success': False,
+    #             'error': f'Unexpected response code: {response.get("response_code")}'
+    #         }
+        
+    async def fetch_data(self, log_id: int = 1, progress_callback=None, output_file: Optional[str] = None) -> Dict[str, Any]:
         """Fetch logged data using FETCH_LOG command."""
         if output_file:
             
@@ -490,6 +606,8 @@ class SensorCommand:
                                 offset = dv.get_uint_32(0)
                                 last_offset = offset
                                 bytes_to_write = data_payload[4:]
+                                if progress_callback:
+                                    progress_callback(offset + len(bytes_to_write))
                                 
                                 if len(bytes_to_write) > 0:
                                     f_log.seek(offset)
