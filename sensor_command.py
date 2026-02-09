@@ -492,7 +492,7 @@ class SensorCommand:
         logging.debug(f"Total entries parsed: {len(entries)}")
         return entries
 
-    async def get_logs(self) -> dict:
+    async def get_log_list(self) -> dict:
         """Get logbook entries from sensor."""
         command = bytearray([GSP_CMD_GET, 109]) + b'/Mem/Logbook/entries\x00'
         response = await self.send_command(command)
