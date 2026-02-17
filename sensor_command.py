@@ -174,7 +174,7 @@ class SensorCommand:
             return True
             
         except Exception as e:
-            self.logger.error(f"Connection failed: {e}")
+            self.logger.error(f"Connection failed: {e}\nPlease try again.")
             raise RuntimeError(f"Failed to connect to {self.device_name}: {e}")
         
     async def discover_device(self, end_of_serial: str) -> bool:
@@ -218,7 +218,7 @@ class SensorCommand:
             return True
             
         except Exception as e:
-            self.logger.error(f"Connection failed: {e}")
+            self.logger.error(f"Connection failed: {e}\nPlease try again.")
             return False
     
     async def disconnect(self):
