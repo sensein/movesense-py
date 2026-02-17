@@ -54,13 +54,13 @@ class AdvancedConfigDialog:
         IMU_rates = [13, 26, 52, 104, 208, 416, 833]
         self.measurements = {
             "/Meas/Acc": IMU_rates,
-            "Algo/ECGRR": [],
+            "/Algo/ECGRR": [],
             "/Meas/Gyro": IMU_rates,
             "/Meas/Ecg": [125, 128, 200, 250, 256, 500, 512],
             "/Meas/HR": [],
-            "Meas/IMU6" : IMU_rates,
-            "Meas/IMU6m" : IMU_rates,
-            "Meas/IMU9" : IMU_rates,
+            "/Meas/IMU6" : IMU_rates,
+            "/Meas/IMU6m" : IMU_rates,
+            "/Meas/IMU9" : IMU_rates,
             "/Meas/Magn": IMU_rates,
             "/Meas/Temp": [],
             
@@ -436,24 +436,24 @@ class DataloggerGUI:
         self.fetch_button.grid(row=6, column=1, padx=5, pady=5)
 
         # Progress section
-        progress_frame = ttk.LabelFrame(main_frame, text="Download Progress", padding="5")
-        progress_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+        self.progress_frame = ttk.LabelFrame(main_frame, text="Download Progress", padding="5")
+        self.progress_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
 
         # Overall progress
-        ttk.Label(progress_frame, text="Overall:").grid(row=0, column=0, sticky=tk.W)
-        self.overall_progress = ttk.Progressbar(progress_frame, length=400, mode='determinate')
+        ttk.Label(self.progress_frame, text="Overall:").grid(row=0, column=0, sticky=tk.W)
+        self.overall_progress = ttk.Progressbar(self.progress_frame, length=400, mode='determinate')
         self.overall_progress.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
-        self.overall_label = ttk.Label(progress_frame, text="")
+        self.overall_label = ttk.Label(self.progress_frame, text="")
         self.overall_label.grid(row=0, column=2, sticky=tk.W)
 
         # Current file progress
-        ttk.Label(progress_frame, text="Current File:").grid(row=1, column=0, sticky=tk.W)
-        self.file_progress = ttk.Progressbar(progress_frame, length=400, mode='determinate')
+        ttk.Label(self.progress_frame, text="Current File:").grid(row=1, column=0, sticky=tk.W)
+        self.file_progress = ttk.Progressbar(self.progress_frame, length=400, mode='determinate')
         self.file_progress.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5)
-        self.file_label = ttk.Label(progress_frame, text="")
+        self.file_label = ttk.Label(self.progress_frame, text="")
         self.file_label.grid(row=1, column=2, sticky=tk.W)
 
-        progress_frame.columnconfigure(1, weight=1)
+        self.progress_frame.columnconfigure(1, weight=1)
 
         self.logging_serial = None
         self.serial_entry.bind('<KeyRelease>', self.on_serial_change)
@@ -1090,6 +1090,7 @@ class DataloggerGUI:
 
             # Reset progress bars
             self.root.after(0, self.reset_progress_bars)
+            self.root.after(0, self.progress_frame.grid)
 
             # Set logging active flag 
             self.fetching_active = True
@@ -1101,7 +1102,7 @@ class DataloggerGUI:
             # Progress tracking variables
             self.total_logs = 0
 
-            def progress_callback(bytes_downloaded, log_id, total_size, current_log_num=1, total_log_count=1, file_sizes=None, bytes_downloaded_so_far=0, total_bytes=0):
+            def progress_callback(bytes_downloaded, log_id, total_size, current_log_num=1, total_log_count=1, file_sizes=None, bytes_downloaded_so_far=0, total_bytes=0, has_known_size=True):
                 #self.root.after(0, self.status_var.set, f"Fetching data... {count} bytes")
                 # Set total logs if not set (first callback)
                 if self.total_logs == 0 and total_log_count > 0:
@@ -1121,29 +1122,33 @@ class DataloggerGUI:
                         file_percent, bytes_downloaded, total_size, log_id)
                 
                 # Update overall progress
-                if self.total_logs > 0:
-                    #bytes_from_completed_files = self.bytes_downloaded_so_far
+                if self.total_logs > 0 and self.total_bytes > 0:
+                    # Byte-based progress for known files
                     total_bytes_downloaded = bytes_downloaded_so_far + bytes_downloaded
-                    overall_percent = (total_bytes_downloaded / self.total_bytes) * 100
-                    #overall_percent = ((current_log_num - 1 + (bytes_downloaded / max(total_size, 1))) / self.total_logs) * 100
+                    overall_percent = min(100, (total_bytes_downloaded / self.total_bytes) * 100)
                     self.root.after(0, self.update_overall_progress, 
                         overall_percent, current_log_num, self.total_logs)
-                    
+                elif self.total_logs > 0:
+                    # Fallback to file-count-based progress if total bytes is 0 or unknown
+                    overall_percent = min(100, ((current_log_num - 1 + (bytes_downloaded / max(total_size, 1))) / self.total_logs) * 100)
+                    self.root.after(0, self.update_overall_progress, 
+                        overall_percent, current_log_num, self.total_logs)
+
+                if has_known_size:
+                    self.root.after(0, self.status_var.set, 
+                        f"Fetching log {log_id}: {bytes_downloaded:,} / {total_size:,} bytes")  
                 else:
-                    # Fallback to file-count-based progress if sizes unavailable
-                    overall_percent = ((current_log_num - 1 + (bytes_downloaded / max(total_size, 1))) / self.total_logs) * 100
-                    self.root.after(0, self.update_overall_progress, 
-                        overall_percent, current_log_num, self.total_logs)
-                    
-                self.root.after(0, self.status_var.set, 
-                    f"Fetching log {log_id}: {bytes_downloaded} / {total_size} bytes")
+                    # For unknown size logs (discovered by probing)
+                    self.root.after(0, self.status_var.set, 
+                        f"Fetching log {log_id} (discovered): {bytes_downloaded:,} bytes")  
 
             with redirect_stdout(output):
                 # Step 1: Fetch data
                 result = await tool.fetch_data(serial=serial, args=None, output_dir=output_dir, progress_callback=progress_callback)
                 self.logging_configured = False
-                
+               
             # Update GUI with fetch output
+            self.root.after(0, self.hide_progress_area) 
             self.root.after(0, self.log_output, output.getvalue())
             # self.root.after(0, self.log_output, "\n Logging completed.")
 
@@ -1408,6 +1413,10 @@ class DataloggerGUI:
         self.file_progress['value'] = 0
         self.overall_label.config(text="")
         self.file_label.config(text="")
+
+    def hide_progress_area(self):
+        """Hide the download progress section after completion"""
+        self.progress_frame.grid_remove()
 
     def update_file_progress(self, percent, downloaded, total, log_id):
         """Update file progress bar"""

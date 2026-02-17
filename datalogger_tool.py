@@ -40,16 +40,40 @@ async def start_logging(serial, args):
     try:
         async with SensorCommand(serial) as sensor:
             result = await sensor.start_logging()
+            status = await sensor.get_status()
+            logging.info(f"Sensor state after start: {status}")
             return result
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
 async def stop_logging(serial, args):
-    """Stop logging on a specific device."""
+    """Stop logging and boot sensor to start a new log."""
     try:
         async with SensorCommand(serial) as sensor:
-            result = await sensor.stop_logging()
-            return result
+            # First, stop the current logging session to flush data to file
+            logging.info(f"Stopping logging for device {serial}...")
+            stop_result = await sensor.stop_logging()
+            logging.info(f"Stop result: success={stop_result.get('success')}, status_code={stop_result.get('status_code')}")
+            if not stop_result.get('success'):
+                return stop_result
+            
+            # Then boot the sensor (system_mode=5) to start a new log
+            logging.info(f"Booting sensor {serial} with system_mode=5...")
+            boot_result = await sensor.set_system_mode(5)
+            logging.info(f"Boot result: success={boot_result.get('success')}, status_code={boot_result.get('status_code')}")
+
+            # Accept status 202 (Accepted) as success for boot command
+            boot_status = boot_result.get('status_code', 0)
+            if boot_status in [200, 202]:
+                boot_result['success'] = True
+                logging.info(f"Boot command accepted with status {boot_status}")
+
+            logging.info(f"Waiting 4 seconds for sensor {serial} to complete boot...")
+            await asyncio.sleep(4)
+            logging.info(f"Boot complete for device {serial}")
+
+            return boot_result
+            
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
@@ -63,7 +87,6 @@ async def fetch_data(serial, args, output_dir=None, progress_callback=None):
             
             # Step 1: Get first batch of logs (max 4) from logbook
             logs = await sensor.get_log_list()
-            print(f"DEBUG: get_log_list returned: {logs}")
             
             if logs.get('success'):
                 entries = logs.get('entries', [])
@@ -86,10 +109,8 @@ async def fetch_data(serial, args, output_dir=None, progress_callback=None):
             else:
                 next_log_id = 1
             
-            # Try to find more logs (with a reasonable limit to avoid infinite loop)
-            max_attempts = 20
-            attempts = 0
-            while attempts < max_attempts:
+            # Try to find more logs 
+            while True:
                 logging.debug(f"Probing for log ID {next_log_id}")
                 
                 # Try to fetch this log
@@ -104,12 +125,14 @@ async def fetch_data(serial, args, output_dir=None, progress_callback=None):
                     }
                     logging.info(f"Discovered additional log ID {next_log_id} (size: {probe_result.get('size', 0)} bytes)")
                     next_log_id += 1
+                elif probe_result.get('status_code') == 404:
+                    # Log not found - no more logs exist
+                    logging.info(f"No log found at ID {next_log_id} (404), stopping probe")
+                    break
                 else:
                     # No more logs found
                     logging.debug(f"No log found at ID {next_log_id}, stopping probe")
                     break
-                
-                attempts += 1
             
             # Now fetch all discovered logs
             total_logs = len(discovered_logs)
@@ -124,6 +147,7 @@ async def fetch_data(serial, args, output_dir=None, progress_callback=None):
             for idx, (log_id, log_info) in enumerate(sorted(discovered_logs.items()), 1):
                 start_time = datetime.now()
                 logging.info(f"Fetching log {log_id} from device {serial} ({idx}/{total_logs})")
+                logging.info(f"=== FETCHING log_id={log_id}, size={log_info['size']} ===")
                 
                 output_file = None
                 if output_dir:
@@ -135,22 +159,26 @@ async def fetch_data(serial, args, output_dir=None, progress_callback=None):
                 has_known_size = log_info['has_known_size']
                 
                 def progress_callback_inner(count):
-                    if progress_callback and has_known_size:
+                    if progress_callback:
                         # Only update progress bar if we know the size beforehand
                         logging.debug(f"Progress callback: bytes={count}, log_id={log_id}, total_size={total_size}, idx={idx}, total_logs={total_logs}")
                         progress_callback(count, log_id, total_size, idx, total_logs, 
                                         file_sizes=file_sizes, 
                                         bytes_downloaded_so_far=bytes_downloaded_so_far, 
-                                        total_bytes=total_bytes)
+                                        total_bytes=total_bytes,
+                                        has_known_size=has_known_size)
                 
                 result = await sensor.fetch_data(
                     log_id=log_id, 
                     output_file=output_file, 
-                    progress_callback=progress_callback_inner if has_known_size else None
+                    progress_callback=progress_callback_inner
                 )
+
+                logging.info(f"=== RESULT for log_id={log_id}: success={result.get('success')} ===")
 
                 if not result.get('success', False):
                     logging.warning(f"Failed to fetch log {log_id}")
+                    logging.error(f"FAILED: {result}")
                     if 'status_code' in result and result['status_code'] != 404:
                         logging.error(f"Status {result['status_code']}: {result.get('error', 'Unknown error')}")
                 else:
