@@ -306,7 +306,7 @@ class DataloggerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Movesense Flash Datalogger Tool")
-        self.root.geometry("800x600")
+        self.root.geometry("800x800")
 
         self.logging_configured = False
         self.logging_active = False
@@ -436,8 +436,9 @@ class DataloggerGUI:
         self.fetch_button.grid(row=6, column=1, padx=5, pady=5)
 
         # Progress section
-        self.progress_frame = ttk.LabelFrame(main_frame, text="Download Progress", padding="5")
-        self.progress_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+        self.progress_frame = ttk.LabelFrame(cmd_frame, text="Download Progress", padding="5")
+        self.progress_frame.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), padx=5, pady=(5,0))
+        self.progress_frame.grid_remove()
 
         # Overall progress
         ttk.Label(self.progress_frame, text="Overall:").grid(row=0, column=0, sticky=tk.W)
@@ -472,7 +473,7 @@ class DataloggerGUI:
         output_frame = ttk.LabelFrame(main_frame, text="Output", padding="5")
         output_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 5))
         output_frame.columnconfigure(0, weight=1)
-        output_frame.rowconfigure(0, weight=0)
+        output_frame.rowconfigure(0, weight=1)
         self.output_text = scrolledtext.ScrolledText(output_frame, height=5, wrap=tk.WORD, state='disabled')
         self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
@@ -503,7 +504,7 @@ class DataloggerGUI:
         self.force_check.grid_remove()
         
         # Configure row weights for resizing
-        main_frame.rowconfigure(2, weight=1)
+        main_frame.rowconfigure(3, weight=1)
 
     def update_button_states(self):
         """Update button states based on connection and logging status"""
@@ -1039,6 +1040,7 @@ class DataloggerGUI:
                 self.root.after(0, self.status_var.set, "Logging stopped")
                 self.logging_active = False
                 self.logging_serial = None
+                self.logging_configured = False
                 self.update_button_states()
 
         except Exception as e:
@@ -1322,23 +1324,27 @@ class DataloggerGUI:
             else:
                 for csv_file in csv_files:
                     self.root.after(0, self.log_output, f"Converting: {csv_file}")
-                    
-                    # Create output EDF filename 
                     edf_file = os.path.splitext(csv_file)[0] + '.edf'
 
-                    try: 
-                        utc_time_dt = datetime.strptime(utc_time, '%Y-%m-%d_%H%M%S').replace(tzinfo=timezone.utc)
-                        csv_to_edf_plus(csv_filename=csv_file, 
-                                    edf_filename=edf_file, 
-                                    sampling_freq=None, 
-                                    unit='mV', 
+                    try:
+                        # Extract UTC time from the CSV header directly
+                        with open(csv_file, 'r') as f:
+                            header = f.readline().strip()
+                        parts = header.split(',')
+                        utc_str = parts[5]
+                        utc_time_dt = datetime.strptime(utc_str[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+
+                        csv_to_edf_plus(csv_filename=csv_file,
+                                    edf_filename=edf_file,
+                                    sampling_freq=None,
+                                    unit='mV',
                                     scale_factor=1,
                                     recording_start=utc_time_dt)
 
                         self.root.after(0, self.log_output, f"Created: {edf_file}")
 
                     except Exception as e:
-                        self.root.after(0, self.log_output, 
+                        self.root.after(0, self.log_output,
                             f"Warning: EDF conversion failed for {csv_file}: {str(e)}")
 
             # Stop the dots
