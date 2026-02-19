@@ -3,13 +3,9 @@
 Generic sensor command class for BLE datalogger devices.
 Based on the Bleak GATT client for cross-platform BLE communication.
 """
-
-import binascii
-import io
 import logging
 import asyncio
 import os
-import signal
 from bleak import BleakClient, BleakScanner
 from functools import reduce
 import struct
@@ -532,24 +528,6 @@ class SensorCommand:
                 'success': False,
                 'error': f'Unexpected response code: {response.get("response_code")}'
             }
-        
-    # async def get_logs(self) -> list[Any]:
-    #     """Get logbook entries from sensor."""
-    #     command = bytearray([GSP_CMD_GET, 123]) + b'/Mem/Logbook/entries\x00'
-    #     response = await self.send_command(command)
-        
-    #     if response.get('response_code') == GSP_RESP_COMMAND_RESPONSE:
-    #         status_code = response.get('status_code', 0)
-    #         return {
-    #             'success': status_code == 200,
-    #             'status_code': status_code,
-    #             'raw_data': response.get('raw_data')
-    #         }
-    #     else:
-    #         return {
-    #             'success': False,
-    #             'error': f'Unexpected response code: {response.get("response_code")}'
-    #         }
         
     async def fetch_data(self, log_id: int = 1, progress_callback=None, output_file: Optional[str] = None) -> Dict[str, Any]:
         """Fetch logged data using FETCH_LOG command."""
