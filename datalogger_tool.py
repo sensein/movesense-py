@@ -312,13 +312,6 @@ def fetch_command(serial, args) -> bool:
         print(f"Device {serial} fetch error: {e}")
         return False
 
-    files_fetched = fetch_result.get('files_fetched', [])
-    logging.info(f"Total files fetched from device {serial}: {len(files_fetched)}")
-    for f in files_fetched:
-        print(f"  Fetched file: {f}")
-        # TODO: Add conversion to json using sbem2json exe
-
-
 def erasemem_command(serial, args) -> bool:
     """Erase memory on devices synchronously using CLEAR_LOGBOOK command."""
     print(f"Erasing memory for device {serial}...")
