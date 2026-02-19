@@ -45,7 +45,7 @@ class AdvancedConfigDialog:
         ttk.Label(main_frame, text="Advanced Logging Configuration", 
                   font=("", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
         
-        # --- Measurement options ---
+        # Measurement options
         options_frame = ttk.LabelFrame(main_frame, text="Available Measurements", padding="10")
         options_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         options_frame.columnconfigure(0, weight=1)
@@ -88,19 +88,18 @@ class AdvancedConfigDialog:
                                   values=[str(r) for r in rates],
                                   width=6, state="readonly")
                 cb.grid(row=0, column=1, sticky=tk.W)  
-                #cb.bind("<<ComboboxSelected>>", lambda e: self.update_config_text())
                 cb.bind("<<ComboboxSelected>>", lambda e, m=meas: self.on_rate_change(m))
 
-        # --- Counter & feedback ---
+        # Counter & feedback
         counter_frame = ttk.Frame(main_frame)
         counter_frame.grid(row=2, column=0, sticky=tk.W, pady=(0, 10))
         self.counter_label = ttk.Label(counter_frame, text="")
         self.counter_label.grid(row=0, column=0, sticky=tk.W)
         self.warning_label = ttk.Label(counter_frame, text="", foreground="red")
         self.warning_label.grid(row=1, column=0, sticky=tk.W)
-        self.update_counter_label()  # Initialize text
+        self.update_counter_label() 
 
-        # --- Configuration output ---
+        # Configuration output 
         config_frame = ttk.LabelFrame(main_frame, text="Configuration Paths", padding="10")
         config_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         config_frame.columnconfigure(0, weight=1)
@@ -108,9 +107,9 @@ class AdvancedConfigDialog:
         self.config_text = scrolledtext.ScrolledText(config_frame, height=5, width=60, wrap=tk.WORD)
         self.config_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
         self.config_text.insert("1.0", current_config)
-        self.config_text.configure(state='disabled')  # NEW: make read-only
+        self.config_text.configure(state='disabled')
         
-        # --- Buttons ---
+        # Buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=4, column=0, sticky=(tk.E), pady=(10, 0))
         
@@ -124,7 +123,7 @@ class AdvancedConfigDialog:
         y = parent.winfo_y() + (parent.winfo_height() - self.dialog.winfo_height()) // 2
         self.dialog.geometry(f"+{x}+{y}")
 
-    # --- When checkbox is toggled ---
+    # When checkbox is toggled
     def on_checkbox_toggle(self, meas):
         selected_count = sum(var.get() for var in self.vars.values())
         if selected_count > self.MAX_SELECTIONS:
@@ -136,7 +135,7 @@ class AdvancedConfigDialog:
         self.update_config_text()
         self.update_counter_label()
 
-    # --- Updates counter label ---
+    # Updates counter label
     def update_counter_label(self):
         selected_count = sum(var.get() for var in self.vars.values())
         remaining = self.MAX_SELECTIONS - selected_count
@@ -150,7 +149,7 @@ class AdvancedConfigDialog:
 
         self.counter_label.configure(text=msg, foreground=color)
 
-    # --- Live update handler ---
+    # Live update handler
     def update_config_text(self):
         """Refresh config text area based on current selections"""
         selected = []
@@ -173,7 +172,7 @@ class AdvancedConfigDialog:
 
     def on_rate_change(self, meas):
         """Handle rate changes and show warning if rates are too high"""
-        self.update_config_text()  # keep normal config update
+        self.update_config_text() 
 
         rate_var = self.rate_vars.get(meas)
         if not rate_var:
@@ -209,11 +208,7 @@ class AdvancedConfigDialog:
     def reset_default(self):
         for meas in self.vars:
             self.vars[meas].set(False)
-        # self.vars["/Meas/Acc"].set(True)
-        # self.vars["/Meas/Gyro"].set(True)
         self.vars["/Meas/Ecg"].set(True)
-        # self.rate_vars["/Meas/Acc"].set("52")
-        # self.rate_vars["/Meas/Gyro"].set("52")
         self.rate_vars["/Meas/Ecg"].set("200")
         self.warning_label.configure(text="")
         self.update_config_text()
@@ -252,21 +247,21 @@ class AboutDialog:
         contact_frame = ttk.LabelFrame(main_frame, text="Information", padding="10")
         contact_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         
-        # --- Email ---
+        # Email
         ttk.Label(contact_frame, text="Email: ").grid(row=0, column=0, sticky=tk.W)
         email_label = ttk.Label(contact_frame, text="info@movesense.com", 
                                foreground="blue", cursor="hand2")
         email_label.grid(row=0, column=1, sticky=tk.W)
         email_label.bind("<Button-1>", lambda e: webbrowser.open("mailto:info@movesense.com"))
 
-        # --- Website ---
+        # Website
         ttk.Label(contact_frame, text="Website: ").grid(row=1, column=0, sticky=tk.W)
         website_label = ttk.Label(contact_frame, text="www.movesense.com", 
                                   foreground="blue", cursor="hand2")
         website_label.grid(row=1, column=1, sticky=tk.W)
         website_label.bind("<Button-1>", lambda e: webbrowser.open("https://www.movesense.com"))
 
-        # --- GitHub Repository ---
+        # GitHub Repository
         ttk.Label(contact_frame, text="Git Repository: ").grid(row=2, column=0, sticky=tk.W)
         github_label = ttk.Label(contact_frame, text="github.com/movesense/flash-datalogger", 
                                  foreground="blue", cursor="hand2")
@@ -386,16 +381,16 @@ class DataloggerGUI:
         # Row 1: Config with Advanced button
         self.config_label = ttk.Label(cmd_frame, text="3.")
         self.config_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
-        self.config_label.grid_remove()  # Hide by default
+        self.config_label.grid_remove()  
 
         self.config_button = ttk.Button(cmd_frame, text="Configure Logging", command=self.configure_logging, width=20)
         self.config_button.grid(row=1, column=1, padx=5, pady=5)
-        self.config_button.grid_remove()  # Hide by default
+        self.config_button.grid_remove()  
 
         # Config entry frame with advanced button
         self.config_entry_frame = ttk.Frame(cmd_frame)
         self.config_entry_frame.grid(row=1, column=2, columnspan=2, sticky=(tk.W, tk.E), padx=5)
-        self.config_entry_frame.grid_remove()  # Hide by default
+        self.config_entry_frame.grid_remove()  
         self.config_entry_frame.columnconfigure(0, weight=1)
 
         self.config_entry_var = tk.StringVar(value="/Meas/ECG/200/mV")
@@ -740,7 +735,7 @@ class DataloggerGUI:
             with redirect_stdout(output):
                 status = await tool.fetch_status(serial=serial, args=None)
 
-            # --- Handle tool errors ---
+            # Handle tool errors
             if isinstance(status, dict) and not status.get("success", True):
                 error_msg = status.get("error", "Status fetch failed (unknown error).")
 
@@ -869,7 +864,6 @@ class DataloggerGUI:
             
         try:
             raw_input = self.config_entry.get().strip()
-            #paths = self.config_entry.get().strip().split()
             paths = [p.strip() for p in re.split(r'[,\s]+', raw_input) if p.strip()]
 
             self.root.after(0, self.log_output, "Configure logging started...")
@@ -888,7 +882,6 @@ class DataloggerGUI:
             output = io.StringIO()
             with redirect_stdout(output):
                 result = await tool.configure_device(serial, paths=paths)
-                # print(f"Logging configured for device {serial} with paths: {paths}")
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
@@ -1105,17 +1098,10 @@ class DataloggerGUI:
             self.total_logs = 0
 
             def progress_callback(bytes_downloaded, log_id, total_size, current_log_num=1, total_log_count=1, file_sizes=None, bytes_downloaded_so_far=0, total_bytes=0, has_known_size=True):
-                #self.root.after(0, self.status_var.set, f"Fetching data... {count} bytes")
                 # Set total logs if not set (first callback)
                 if self.total_logs == 0 and total_log_count > 0:
                     self.total_logs = total_log_count
                     self.total_bytes = total_bytes
-
-                # if file_sizes:
-                #     self.total_bytes = sum(file_sizes)
-                #     self.bytes_downloaded_so_far = 0
-                # else:
-                #     self.total_bytes = 0
 
                 # Update current file progress
                 if total_size > 0:
@@ -1152,7 +1138,6 @@ class DataloggerGUI:
             # Update GUI with fetch output
             self.root.after(0, self.hide_progress_area) 
             self.root.after(0, self.log_output, output.getvalue())
-            # self.root.after(0, self.log_output, "\n Logging completed.")
 
             if not result.get("success", False):
                 self.root.after(0, self.log_output, f"\nError fetching data: {result.get('error', 'Unknown error')}\n")
