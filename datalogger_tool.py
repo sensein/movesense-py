@@ -216,6 +216,21 @@ async def erase_memory(serial):
             return result
     except Exception as e:
         return {'success': False, 'error': str(e)}
+    
+async def get_battery_level(serial):
+    """Get battery level from a specific device."""
+    try:
+        async with SensorCommand(serial, set_time=False) as sensor:
+            result = await sensor.get_resource("/System/Energy/Level")
+            if result.get('success'):
+                data = result.get('data', b'')
+                if len(data) >= 1:
+                    from sensor_command import DataView
+                    level = DataView(data).get_uint_8(0)
+                    result['battery_level'] = level
+            return result
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 
 def run_async_command(coro):
     """Run an async command, handling both sync and async contexts."""

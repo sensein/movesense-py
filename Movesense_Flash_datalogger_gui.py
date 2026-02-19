@@ -488,9 +488,13 @@ class DataloggerGUI:
         # About button on the left
         ttk.Button(bottom_frame, text="About", command=self.show_about, width=10).grid(row=0, column=0, sticky=tk.W)
 
+        # Battery status label
+        self.battery_label = ttk.Label(bottom_frame, text="Battery: --", foreground="gray")
+        self.battery_label.grid(row=0, column=1, padx=(10, 5), sticky=tk.W)
+
         # Erase button on the right
         self.erase_button = ttk.Button(bottom_frame, text="Erase Memory", command=self.erase_memory, width=20)
-        self.erase_button.grid(row=0, column=1, padx=5, sticky=tk.E)
+        self.erase_button.grid(row=0, column=3, padx=5, sticky=tk.E)
 
         # Force checkbox 
         self.force_var = tk.BooleanVar()
@@ -551,6 +555,8 @@ class DataloggerGUI:
                 self.logging_serial = None
                 self.update_button_states()
                 self.log_output(f"Serial number changed. Please click Connect again.\n")
+        if hasattr(self, 'battery_label'):
+            self.battery_label.config(text="Battery: --", foreground="gray")
 
 
     def show_advanced_config(self):
@@ -848,6 +854,14 @@ class DataloggerGUI:
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
             self.root.after(0, self.status_var.set, "Status check completed.")
+
+            battery_result = await tool.get_battery_level(serial)
+            if battery_result.get('success'):
+                level = battery_result.get('battery_level', '?')
+                color = 'green' if isinstance(level, int) and level > 15 else 'red'
+                self.root.after(0, lambda l=level, c=color: self.battery_label.config(text=f"Battery: {l}%", foreground=c))
+            else:
+                self.root.after(0, lambda: self.battery_label.config(text="Battery: N/A", foreground="gray"))
                 
         except Exception as e:
             error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
