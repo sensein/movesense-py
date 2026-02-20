@@ -21,6 +21,18 @@ import datalogger_tool as tool
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
+# Debug file logging setup
+# Always writes DEBUG+ to debug.log regardless of root logger level
+_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
+dbg = logging.getLogger("movesense.debug")
+dbg.setLevel(logging.DEBUG)
+_fh = logging.FileHandler(_log_path, mode='a', encoding='utf-8')
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+dbg.addHandler(_fh)
+dbg.propagate = False  # Don't forward to root logger
+dbg.info("=== Application started ===")
+
 class AdvancedConfigDialog:
     """Dialog for advanced configuration options"""
     MAX_SELECTIONS = 3  
@@ -725,6 +737,7 @@ class DataloggerGUI:
         """Check device status"""
         try:
             serial = self.serial_entry.get().strip()
+            dbg.info(f"check_status called, serial='{serial}")
 
             if not serial:
                 messagebox.showwarning("Warning", "Please enter a valid serial number.")
@@ -823,6 +836,7 @@ class DataloggerGUI:
             # Connection successful!
             self.device_connected = True
             self.last_connected_serial = serial
+            dbg.info(f"Connected successfully to {serial}, dlstate={status.get('dlstate')}, app_version={status.get('app_version')}")
 
             # Sync logging_active with device state
             dlstate = status.get('dlstate', 1)
@@ -864,7 +878,7 @@ class DataloggerGUI:
                 self.root.after(0, lambda: self.battery_label.config(text="Battery: N/A", foreground="gray"))
                 
         except Exception as e:
-            error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
+            dbg.error(f"check_status exception: {str(e)}\n{traceback.format_exc()}")
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
             self.device_connected = False
@@ -1061,6 +1075,7 @@ class DataloggerGUI:
         """Fetch data from devices"""
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
+        dbg.info(f"fetch_data called")
 
         # Check if device is connected
         if not self.device_connected:
@@ -1146,11 +1161,13 @@ class DataloggerGUI:
 
             with redirect_stdout(output):
                 # Step 1: Fetch data
+                dbg.info(f"Step 1: Starting BLE fetch for serial={serial}, output_dir={output_dir}")
                 result = await tool.fetch_data(serial=serial, args=None, output_dir=output_dir, progress_callback=progress_callback)
                 self.logging_configured = False
                
             # Update GUI with fetch output
             self.root.after(0, self.hide_progress_area) 
+            dbg.info(f"Step 1: BLE fetch complete, success={result.get('success')}, files={result.get('files_fetched')}")
             self.root.after(0, self.log_output, output.getvalue())
 
             if not result.get("success", False):
@@ -1164,6 +1181,7 @@ class DataloggerGUI:
             # Step 2: Convert SBEM to JSON
             self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---")
             self.root.after(0, self.status_var.set, "Converting SBEM to JSON...")
+            logging.debug("Step 2: Starting SBEM conversion")
 
             # Create sbem-files folder if it doesn't exist
             sbem_folder = os.path.join(output_dir, "sbem-files")
@@ -1184,6 +1202,7 @@ class DataloggerGUI:
                 self.root.after(0, self.log_output, "No SBEM files found to convert.")
             else:
                 for sbem_file in sbem_files:
+                    logging.debug(f"Found {len(sbem_files)} SBEM files")
                     self.root.after(0, self.log_output, f"Converting: {sbem_file}")
 
                     # Get directory and filename
