@@ -17,12 +17,13 @@ import traceback
 import webbrowser
 from contextlib import redirect_stdout
 import datalogger_tool as tool  
+import queue
+import threading
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
 # Debug file logging setup
-# Always writes DEBUG+ to debug.log regardless of root logger level
 _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
 dbg = logging.getLogger("movesense.debug")
 dbg.setLevel(logging.DEBUG)
@@ -30,7 +31,7 @@ _fh = logging.FileHandler(_log_path, mode='a', encoding='utf-8')
 _fh.setLevel(logging.DEBUG)
 _fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 dbg.addHandler(_fh)
-dbg.propagate = False  # Don't forward to root logger
+dbg.propagate = False 
 dbg.info("=== Application started ===")
 
 class AdvancedConfigDialog:
@@ -517,6 +518,24 @@ class DataloggerGUI:
         # Configure row weights for resizing
         main_frame.rowconfigure(3, weight=1)
 
+        # Thread-safe queue for background thread → UI communication
+        self._log_queue = queue.Queue()
+        self._process_log_queue()
+
+    def _process_log_queue(self):
+        """Drain the log queue on the main thread - called repeatedly via after()"""
+        try:
+            while True:
+                msg_type, args = self._log_queue.get_nowait()
+                if msg_type == 'log':
+                    self.log_output(args)
+                elif msg_type == 'status':
+                    self.status_var.set(args)
+        except queue.Empty:
+            pass
+        finally:
+            self.root.after(50, self._process_log_queue)
+
     def update_button_states(self):
         """Update button states based on connection and logging status"""
         if not self.device_connected:
@@ -681,7 +700,7 @@ class DataloggerGUI:
                     utc_time_str = datetime.fromtimestamp(utc_time / 1_000_000,tz=UTC).strftime('%Y-%m-%d_%H%M%S')
                     return utc_time_str
         except Exception as e:
-            self.root.after(0, self.log_output, f"Error extracting UTC time from JSON: {str(e)}\n")
+            self._log_queue.put(('log', f"Error extracting UTC time from JSON: {str(e)}\n"))
         return None
 
     def rename_files_with_utc(self, base_file, utc_time):
@@ -697,8 +716,7 @@ class DataloggerGUI:
                 
                 # Check if already correctly named
                 if base_name == new_name:
-                    self.root.after(0, self.log_output, 
-                        f"File already has correct UTC timestamp: {base_name}\n")
+                    self._log_queue.put(('log', f"File already has correct UTC timestamp: {base_name}\n"))
                     return base_file
                 
                 # Only handle JSON, CSV, and EDF (not SBEM)
@@ -715,19 +733,17 @@ class DataloggerGUI:
                         
                         if os.path.exists(new_file):
                             # Target already exists - don't rename, just delete the duplicate
-                            self.root.after(0, self.log_output, 
-                                f"Target exists, removing duplicate: {os.path.basename(old_file)}\n")
+                            self._log_queue.put(('log', f"Target exists, removing duplicate: {os.path.basename(old_file)}\n"))
                             os.remove(old_file)
                         else:
                             # Rename to correct name
                             os.rename(old_file, new_file)
-                            self.root.after(0, self.log_output, 
-                                f"Renamed: {os.path.basename(old_file)} -> {os.path.basename(new_file)}\n")
+                            self._log_queue.put(('log', f"Renamed: {os.path.basename(old_file)} -> {os.path.basename(new_file)}\n"))
                 
                 return new_file
                     
         except Exception as e:
-            self.root.after(0, self.log_output, f"Error renaming files: {str(e)}\n")
+            self._log_queue.put(('log', f"Error renaming files: {str(e)}\n"))
             return None
     
     @async_handler
@@ -1177,201 +1193,182 @@ class DataloggerGUI:
                 return
             
             self.root.after(0, self.log_output, "\nLogging completed successfully.")
-        
-            # Step 2: Convert SBEM to JSON
-            self.root.after(0, self.log_output, "\n--- Converting SBEM to JSON ---")
-            self.root.after(0, self.status_var.set, "Converting SBEM to JSON...")
-            logging.debug("Step 2: Starting SBEM conversion")
 
-            # Create sbem-files folder if it doesn't exist
-            sbem_folder = os.path.join(output_dir, "sbem-files")
-            if not os.path.exists(sbem_folder):
-                os.makedirs(sbem_folder)
-                self.root.after(0, self.log_output, f"Created folder: {sbem_folder}")
-            
-            # Find all .sbem files in output directory
-            sbem_files = []
-            for root_dir, dirs, files in os.walk(output_dir):
-                if 'sbem-files' in root_dir:
-                    continue
-                for file in files:
-                    if file.endswith('.sbem'):
-                        sbem_files.append(os.path.join(root_dir, file))
-            
-            if not sbem_files:
-                self.root.after(0, self.log_output, "No SBEM files found to convert.")
-            else:
-                for sbem_file in sbem_files:
-                    logging.debug(f"Found {len(sbem_files)} SBEM files")
-                    self.root.after(0, self.log_output, f"Converting: {sbem_file}")
+            # Steps 2-4: Run all file conversions in a background thread
+            def conversion_worker():
+                try:
+                    dbg.info(f"conversion_worker started, thread={threading.current_thread().name}")
 
-                    # Get directory and filename
-                    original_dir = os.path.dirname(sbem_file)
-                    sbem_filename = os.path.basename(sbem_file)
+                    # Step 2: Convert SBEM to JSON
+                    self._log_queue.put(('log', "\n--- Converting SBEM to JSON ---"))
+                    self._log_queue.put(('status', "Converting SBEM to JSON..."))
+
+                    sbem_folder = os.path.join(output_dir, "sbem-files")
+                    if not os.path.exists(sbem_folder):
+                        os.makedirs(sbem_folder)
+                        self._log_queue.put(('log', f"Created folder: {sbem_folder}"))
                     
-                    # Create output JSON filename in the original location
-                    json_filename = os.path.splitext(sbem_filename)[0] + '.json'
-                    json_file = os.path.join(original_dir, json_filename)
+                    sbem_files = []
+                    for root_dir, dirs, files in os.walk(output_dir):
+                        if 'sbem-files' in root_dir:
+                            continue
+                        for file in files:
+                            if file.endswith('.sbem'):
+                                sbem_files.append(os.path.join(root_dir, file))
 
-                    # For sbem2json.exe
-                    if getattr(sys, 'frozen', False):
-                        application_path = sys._MEIPASS
+                    dbg.info(f"Step 2: Found {len(sbem_files)} SBEM files to convert")
+                    if not sbem_files:
+                        self._log_queue.put(('log', "No SBEM files found to convert."))
                     else:
-                        application_path = os.path.dirname(os.path.abspath(__file__))
+                        for sbem_file in sbem_files:
+                            dbg.info(f"Step 2: Converting {sbem_file}")
+                            self._log_queue.put(('log', f"Converting: {sbem_file}"))
 
-                    sbem2json_exe = os.path.join(application_path, "sbem2json.exe")
-                    
-                    # Call sbem2json.exe - convert from original location
-                    converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", json_file]
-                    
-                    conv_process = subprocess.Popen(
-                        converter_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True
-                    )
-                    
-                    conv_output, _ = conv_process.communicate()
-                    if conv_output:
-                        self.root.after(0, self.log_output, conv_output)
-                    
-                    if conv_process.returncode != 0:
-                        self.root.after(0, self.log_output, 
-                            f"Warning: Conversion failed for {sbem_filename}\n")
-                    else:
-                        self.root.after(0, self.log_output, 
-                            f"Created: {json_file}\n")
-                        
-                        # Extract UTC time and rename files after successful conversion
-                        utc_time = self.extract_utc_time_from_json(json_file)
-                        if utc_time:
-                            self.root.after(0, self.log_output, f"UTC time from file: {utc_time}")
-                            # Rename all related files with UTC time
-                            self.rename_files_with_utc(json_file, utc_time)
-                        
-                        # Move SBEM file to sbem-files folder after successful conversion
-                        new_sbem_path = os.path.join(sbem_folder, sbem_filename)
-                        try:
-                            if os.path.exists(new_sbem_path):
-                                # Delete the sbem file since it archived
-                                os.remove(sbem_file)
-                                self.root.after(0, self.log_output, 
-                                    f"Removed SBEM (already archived): {sbem_filename}")
+                            original_dir = os.path.dirname(sbem_file)
+                            sbem_filename = os.path.basename(sbem_file)
+                            json_filename = os.path.splitext(sbem_filename)[0] + '.json'
+                            json_file = os.path.join(original_dir, json_filename)
+
+                            if getattr(sys, 'frozen', False):
+                                application_path = sys._MEIPASS
                             else:
-                                # Move to sbem-files folder
-                                os.rename(sbem_file, new_sbem_path)
-                                self.root.after(0, self.log_output, 
-                                    f"Moved SBEM to: {new_sbem_path}")
-                        except Exception as e:
-                            self.root.after(0, self.log_output, f"Warning: Could not move SBEM file: {str(e)}")
-            
-            # Step 3: Convert JSON to CSV
-            self.root.after(0, self.log_output, "\n--- Converting JSON to CSV ---")
-            self.root.after(0, self.status_var.set, "Converting JSON to CSV...")
-            
-            # Find all .json files in output directory
-            json_files = []
-            for root_dir, dirs, files in os.walk(output_dir):
-                # Skip virtual environment and site-packages directories
-                if 'venv' in root_dir or '.venv' in root_dir or 'site-packages' in root_dir:
-                    continue
-                for file in files:
-                    if file.endswith('.json'):
-                        json_path = os.path.join(root_dir, file)
-                        # Check if corresponding CSV already exists
-                        csv_path = os.path.splitext(json_path)[0] + '.csv'
-                        if os.path.exists(csv_path):
-                            self.root.after(0, self.log_output, 
-                                f"Skipping {file} - CSV already exists")
-                        else:
-                            json_files.append(json_path)
-            
-            if not json_files:
-                self.root.after(0, self.log_output, "No JSON files found to convert")
-            else:
-                for json_file in json_files:
-                    self.root.after(0, self.log_output, f"Converting: {json_file}")
+                                application_path = os.path.dirname(os.path.abspath(__file__))
+
+                            sbem2json_exe = os.path.join(application_path, "sbem2json.exe")
+                            converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", json_file]
+                            
+                            conv_process = subprocess.Popen(
+                                converter_cmd,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True
+                            )
+                            conv_output, _ = conv_process.communicate()
+                            if conv_output:
+                                self._log_queue.put(('log', conv_output))
+                            
+                            if conv_process.returncode != 0:
+                                dbg.warning(f"Step 2: SBEM conversion failed for {sbem_filename}, returncode={conv_process.returncode}")
+                                self._log_queue.put(('log', f"Warning: Conversion failed for {sbem_filename}\n"))
+                            else:
+                                dbg.info(f"Step 2: Created {json_file}")
+                                self._log_queue.put(('log', f"\nCreated: {json_file}\n"))
+                                
+                                utc_time = self.extract_utc_time_from_json(json_file)
+                                if utc_time:
+                                    self._log_queue.put(('log', f"UTC time from file: {utc_time}"))
+                                    self.rename_files_with_utc(json_file, utc_time)
+                                
+                                new_sbem_path = os.path.join(sbem_folder, sbem_filename)
+                                try:
+                                    if os.path.exists(new_sbem_path):
+                                        os.remove(sbem_file)
+                                        self._log_queue.put(('log', f"Removed SBEM (already archived): {sbem_filename}"))
+                                    else:
+                                        os.rename(sbem_file, new_sbem_path)
+                                        self._log_queue.put(('log', f"Moved SBEM to: {new_sbem_path}"))
+                                except Exception as e:
+                                    self._log_queue.put(('log', f"Warning: Could not move SBEM file: {str(e)}"))
                     
-                    # Create output CSV filename
-                    csv_file = os.path.splitext(json_file)[0] + '.csv'
-
-                    try: 
-                        convert_json_to_csv(input_file=json_file, 
-                                    output_file=csv_file)
-
-                        self.root.after(0, self.log_output, f"Created: {csv_file}")
-
-                    except Exception as e:
-                        self.root.after(0, self.log_output, 
-                            f"Warning: CSV conversion failed for {json_file}: {str(e)}")
-                        
-            # Step 4: Convert CSV to EDF
-            self.root.after(0, self.log_output, "\n--- Converting CSV to EDF ---")
-            self.root.after(0, self.status_var.set, "Converting CSV to EDF...")
-
-            # Find ECG-related CSV files in output directory
-            csv_files = []
-            csv_files_total = 0
-            for root_dir, dirs, files in os.walk(output_dir):
-                if 'venv' in root_dir or 'site-packages' in root_dir:
-                    continue  # Skip virtual environment and site-packages directories
-                for file in files:
-                    # Only convert ECG-related CSV files to EDF
-                    file_lower = file.lower()
-                    is_ecg = (file_lower.endswith('.csv') and 
-                            ('measecg' in file_lower or 'measecgmv' in file_lower or 
-                            (file_lower.startswith('log_') and 'ecg' in file_lower)))
+                    # Step 3: Convert JSON to CSV
+                    self._log_queue.put(('log', "\n--- Converting JSON to CSV ---"))
+                    self._log_queue.put(('status', "Converting JSON to CSV..."))
                     
-                    if is_ecg:
-                        csv_files_total += 1
-                        csv_path = os.path.join(root_dir, file)
-                        # Check if corresponding EDF already exists
-                        edf_path = os.path.splitext(csv_path)[0] + '.edf'
-                        if os.path.exists(edf_path):
-                            self.root.after(0, self.log_output, 
-                                f"Skipping {file} - EDF already exists")
+                    json_files = []
+                    for root_dir, dirs, files in os.walk(output_dir):
+                        if 'venv' in root_dir or '.venv' in root_dir or 'site-packages' in root_dir:
+                            continue
+                        for file in files:
+                            if file.endswith('.json'):
+                                json_path = os.path.join(root_dir, file)
+                                csv_path = os.path.splitext(json_path)[0] + '.csv'
+                                if os.path.exists(csv_path):
+                                    self._log_queue.put(('log', f"Skipping {file} - CSV already exists"))
+                                else:
+                                    json_files.append(json_path)
+                    
+                    dbg.info(f"Step 3: Found {len(json_files)} JSON files to convert to CSV")
+                    if not json_files:
+                        self._log_queue.put(('log', "No JSON files found to convert"))
+                    else:
+                        for json_file in json_files:
+                            dbg.info(f"Step 3: Converting {json_file}")
+                            self._log_queue.put(('log', f"Converting: {json_file}"))
+                            csv_file = os.path.splitext(json_file)[0] + '.csv'
+                            try:
+                                convert_json_to_csv(input_file=json_file, output_file=csv_file)
+                                dbg.info(f"Step 3: Created {csv_file}")
+                                self._log_queue.put(('log', f"\nCreated: {csv_file}"))
+                            except Exception as e:
+                                dbg.error(f"Step 3: CSV conversion failed for {json_file}: {str(e)}")
+                                self._log_queue.put(('log', f"Warning: CSV conversion failed for {json_file}: {str(e)}"))
+                            
+                    # Step 4: Convert CSV to EDF
+                    self._log_queue.put(('log', "\n--- Converting CSV to EDF ---"))
+                    self._log_queue.put(('status', "Converting CSV to EDF..."))
+
+                    csv_files = []
+                    csv_files_total = 0
+                    for root_dir, dirs, files in os.walk(output_dir):
+                        if 'venv' in root_dir or 'site-packages' in root_dir:
+                            continue
+                        for file in files:
+                            file_lower = file.lower()
+                            is_ecg = (file_lower.endswith('.csv') and 
+                                    ('measecg' in file_lower or 'measecgmv' in file_lower or 
+                                    (file_lower.startswith('log_') and 'ecg' in file_lower)))
+                            if is_ecg:
+                                csv_files_total += 1
+                                csv_path = os.path.join(root_dir, file)
+                                edf_path = os.path.splitext(csv_path)[0] + '.edf'
+                                if os.path.exists(edf_path):
+                                    self._log_queue.put(('log', f"Skipping {file} - EDF already exists"))
+                                else:
+                                    csv_files.append(csv_path)
+
+                    dbg.info(f"Step 4: Found {len(csv_files)} ECG CSV files to convert to EDF (total ECG CSVs: {csv_files_total})")
+                    if not csv_files:
+                        if csv_files_total == 0:
+                            self._log_queue.put(('log', "No CSV files found in directory"))
                         else:
-                            csv_files.append(csv_path)
+                            self._log_queue.put(('log', "All CSV files already converted. No new EDF files to create."))
+                    else:
+                        for csv_file in csv_files:
+                            dbg.info(f"Step 4: Converting {csv_file}")
+                            self._log_queue.put(('log', f"Converting: {csv_file}"))
+                            edf_file = os.path.splitext(csv_file)[0] + '.edf'
+                            try:
+                                with open(csv_file, 'r') as f:
+                                    header = f.readline().strip()
+                                parts = header.split(',')
+                                utc_str = parts[5]
+                                utc_time_dt = datetime.strptime(utc_str[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                                csv_to_edf_plus(csv_filename=csv_file,
+                                            edf_filename=edf_file,
+                                            sampling_freq=None,
+                                            unit='mV',
+                                            scale_factor=1,
+                                            recording_start=utc_time_dt)
+                                dbg.info(f"Step 4: Created {edf_file}")
+                                self._log_queue.put(('log', f"\nCreated: {edf_file}"))
+                            except Exception as e:
+                                dbg.error(f"Step 4: EDF conversion failed for {csv_file}: {str(e)}")
+                                self._log_queue.put(('log', f"Warning: EDF conversion failed for {csv_file}: {str(e)}"))
 
-            if not csv_files:
-                if csv_files_total == 0:
-                    self.root.after(0, self.log_output, "No CSV files found in directory")
-                else:
-                    self.root.after(0, self.log_output, 
-                        f"All CSV files already converted. No new EDF files to create.")
-            else:
-                for csv_file in csv_files:
-                    self.root.after(0, self.log_output, f"Converting: {csv_file}")
-                    edf_file = os.path.splitext(csv_file)[0] + '.edf'
+                    self.fetching_active = False
+                    dbg.info("conversion_worker completed successfully")
+                    self._log_queue.put(('status', "All conversions completed."))
+                    self._log_queue.put(('log', "All conversions completed."))
+                    self._log_queue.put(('log', "\nDone!\n"))
 
-                    try:
-                        # Extract UTC time from the CSV header directly
-                        with open(csv_file, 'r') as f:
-                            header = f.readline().strip()
-                        parts = header.split(',')
-                        utc_str = parts[5]
-                        utc_time_dt = datetime.strptime(utc_str[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                except Exception as e:
+                    self.fetching_active = False
+                    dbg.error(f"conversion_worker exception: {str(e)}\n{traceback.format_exc()}")
+                    self._log_queue.put(('log', f"\nError: {str(e)}"))
+                    self._log_queue.put(('status', "Error occurred"))
 
-                        csv_to_edf_plus(csv_filename=csv_file,
-                                    edf_filename=edf_file,
-                                    sampling_freq=None,
-                                    unit='mV',
-                                    scale_factor=1,
-                                    recording_start=utc_time_dt)
-
-                        self.root.after(0, self.log_output, f"Created: {edf_file}")
-
-                    except Exception as e:
-                        self.root.after(0, self.log_output,
-                            f"Warning: EDF conversion failed for {csv_file}: {str(e)}")
-
-            # Stop the dots
-            self.fetching_active = False
-
-            # All done
-            self.root.after(0, self.status_var.set, "All conversions completed.")
-            self.root.after(0, self.log_output, "All conversions completed.")
-            self.root.after(0, self.log_output, "\nDone!\n")
+            threading.Thread(target=conversion_worker, daemon=True).start()
+            dbg.info("conversion_worker thread launched")
         
         except Exception as e:
             self.fetching_active = False
