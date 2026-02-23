@@ -247,7 +247,7 @@ class SensorCommand:
                 'raw_data': data,
                 'parsed': dv
             }
-            self.logger.debug(f"Notification received: {response_data}")
+            #self.logger.debug(f"Notification received: {response_data}")
 
             # Parse response based on GSP protocol
             if response_code == GSP_RESP_COMMAND_RESPONSE:
@@ -272,7 +272,7 @@ class SensorCommand:
                 response_data['data_payload'] = data[2:] if len(data) > 2 else b''
             
             # Queue the response for processing
-            self.logger.debug(f"Queuing response: {response_data}")
+            #self.logger.debug(f"Queuing response: {response_data}")
             await self.response_queue.put(response_data)
             
         except Exception as e:
