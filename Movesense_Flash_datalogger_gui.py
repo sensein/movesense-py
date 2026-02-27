@@ -25,7 +25,8 @@ from tkinter import ttk, scrolledtext
 
 # Debug file logging setup
 _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
-dbg = logging.getLogger("movesense.debug")
+#dbg = logging.getLogger("movesense.debug")
+dbg = logging.root
 dbg.setLevel(logging.DEBUG)
 _fh = logging.FileHandler(_log_path, mode='a', encoding='utf-8')
 _fh.setLevel(logging.DEBUG)
@@ -386,8 +387,8 @@ class DataloggerGUI:
         
         # Row 0: Connect / Status
         ttk.Label(cmd_frame, text="2.").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
-        self.conncet_button = ttk.Button(cmd_frame, text="Connect", command=self.check_status, width=20)
-        self.conncet_button.grid(row=0, column=1, padx=5, pady=5)
+        self.connect_button = ttk.Button(cmd_frame, text="Connect", command=self.check_status, width=20)
+        self.connect_button.grid(row=0, column=1, padx=5, pady=5)
         self.connection_status_label = ttk.Label(cmd_frame, text="Check device connection and info")
         self.connection_status_label.grid(row=0, column=2, sticky=tk.W, padx=5)
 
@@ -475,7 +476,9 @@ class DataloggerGUI:
         ttk.Label(fetch_frame, text="Path:").grid(row=0, column=0, padx=(0, 5))
         self.output_entry = ttk.Entry(fetch_frame, width=150) 
         self.output_entry.grid(row=0, column=1, sticky="ew")  
-        ttk.Button(fetch_frame, text="Browse...", command=self.browse_output).grid(row=0, column=2, padx=(5, 0))
+        #ttk.Button(fetch_frame, text="Browse...", command=self.browse_output).grid(row=0, column=2, padx=(5, 0))
+        self.browse_button = ttk.Button(fetch_frame, text="Browse...", command=self.browse_output)
+        self.browse_button.grid(row=0, column=2, padx=(5, 0))
         
         # Output Section
         output_frame = ttk.LabelFrame(main_frame, text="Output", padding="5")
@@ -486,7 +489,9 @@ class DataloggerGUI:
         self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Clear output button
-        ttk.Button(output_frame, text="Clear Output", command=self.clear_output).grid(row=1, column=0, pady=(5, 0))
+        #ttk.Button(output_frame, text="Clear Output", command=self.clear_output).grid(row=1, column=0, pady=(5, 0))
+        self.clear_button = ttk.Button(output_frame, text="Clear Output", command=self.clear_output)
+        self.clear_button.grid(row=1, column=0, pady=(5, 0), sticky=tk.W)
 
         # Status bar
         self.status_var = tk.StringVar(value="Ready")
@@ -499,7 +504,10 @@ class DataloggerGUI:
         bottom_frame.columnconfigure(0, weight=1)
         
         # About button on the left
-        ttk.Button(bottom_frame, text="About", command=self.show_about, width=10).grid(row=0, column=0, sticky=tk.W)
+        #ttk.Button(bottom_frame, text="About", command=self.show_about, width=10).grid(row=0, column=0, sticky=tk.W)
+        self.about_button = ttk.Button(bottom_frame, text="About", command=self.show_about, width=10)
+        self.about_button.grid(row=0, column=0, sticky=tk.W)
+
 
         # Battery status label
         self.battery_label = ttk.Label(bottom_frame, text="Battery: --", foreground="gray")
@@ -549,31 +557,58 @@ class DataloggerGUI:
                 self.erase_button.config(state='disabled')
             if hasattr(self, 'configure_button'):
                 self.configure_button.config(state='disabled')
-            self.connection_status_label.config(text="Not connected - click Connect first", foreground="red")
+            #self.connection_status_label.config(text="Not connected - click Connect first", foreground="red")
         elif self.logging_active:
             # Connected and logging - only Stop should be enabled
+            self.connect_button.config(state='normal')
             self.start_button.config(state='disabled')
             self.stop_button.config(state='normal')
             self.fetch_button.config(state='disabled')
+            self.about_button.config(state='normal')
+            self.browse_button.config(state='normal')
             if hasattr(self, 'config_button'):
                 self.config_button.config(state='disabled')
             if hasattr(self, 'erase_button'):
                 self.erase_button.config(state='disabled')
             if hasattr(self, 'configure_button'):
                 self.configure_button.config(state='disabled')
-            self.connection_status_label.config(text="Device connected - Logging active", foreground="green")
+            #self.connection_status_label.config(text="Device connected - Logging active", foreground="green")
         else:
             # Connected but not logging - Start and Load Data enabled
+            self.connect_button.config(state='normal')
             self.start_button.config(state='normal')
             self.stop_button.config(state='disabled')
             self.fetch_button.config(state='normal')
+            self.clear_button.config(state='normal')
+            self.about_button.config(state='normal')
+            self.browse_button.config(state='normal')
             if hasattr(self, 'config_button'):
                 self.config_button.config(state='normal')
             if hasattr(self, 'erase_button'):
                 self.erase_button.config(state='normal')
             if hasattr(self, 'configure_button'):
                 self.configure_button.config(state='normal')
-            self.connection_status_label.config(text="Device connected - Ready", foreground="green")
+            #self.connection_status_label.config(text="Device connected - Ready", foreground="green")
+
+    def disable_all_buttons(self):
+        """Disable all action buttons immediately"""
+        def _disable():
+            for btn_name in [
+                'connect_button',
+                'start_button',
+                'stop_button',
+                'fetch_button',
+                'config_button',
+                'erase_button',
+                'configure_button',
+                'browse_button',
+                'about_button',
+                'clear_button'
+            ]:
+                btn = getattr(self, btn_name, None)
+                if btn:
+                    btn.config(state='disabled')
+        self.root.after(0, _disable)
     
     def on_serial_change(self, event=None):
         """Called when serial number entry is modified"""
@@ -748,6 +783,8 @@ class DataloggerGUI:
     
     @async_handler
     async def check_status(self):
+        # Disable immediately to prevent double clicks
+        self.disable_all_buttons()
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
         """Check device status"""
@@ -762,7 +799,7 @@ class DataloggerGUI:
                 self.update_button_states()
                 return
             
-            self.root.after(0, self.log_output, "Connecting sensor and loading status...")
+            self.root.after(0, self.log_output, "Connecting sensor and loading status. Please note that battery state may take a moment to load.")
             self.root.after(0, self.status_var.set, "Connecting sensor and loading status.")
                 
             # Capture stdout to show in GUI
@@ -860,17 +897,14 @@ class DataloggerGUI:
             if dlstate == 3:
                 self.logging_active = True
                 self.logging_serial = serial
-                self.fetch_button.config(state='disabled')
+                #self.fetch_button.config(state='disabled')
                 self.root.after(0, self.log_output, 
                     f"Device is currently logging. Use 'Stop Logging' to stop.\n")
                 self.root.after(2000, self.logging_data)
             else:
                 self.logging_active = False
                 self.logging_serial = None
-                self.fetch_button.config(state='normal')
-
-            # Update button states based on connection and logging status
-            self.update_button_states()
+                #self.fetch_button.config(state='normal')
 
             with redirect_stdout(output):
                 print(f"Device {serial} status:")
@@ -883,7 +917,7 @@ class DataloggerGUI:
             
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
-            self.root.after(0, self.status_var.set, "Status check completed.")
+            #self.root.after(0, self.status_var.set, "Status check completed.")
 
             battery_result = await tool.get_battery_level(serial)
             if battery_result.get('success'):
@@ -892,6 +926,11 @@ class DataloggerGUI:
                 self.root.after(0, lambda l=level, c=color: self.battery_label.config(text=f"Battery: {l}%", foreground=c))
             else:
                 self.root.after(0, lambda: self.battery_label.config(text="Battery: N/A", foreground="gray"))
+
+            self.root.after(0, self.status_var.set, "Status check completed.")
+
+            # Update button states based on connection and logging status
+            self.update_button_states()
                 
         except Exception as e:
             dbg.error(f"check_status exception: {str(e)}\n{traceback.format_exc()}")
@@ -900,12 +939,15 @@ class DataloggerGUI:
             self.device_connected = False
             self.update_button_states()
 
+        finally:
+            self.root.after(0, lambda: self.connect_button.config(state='normal'))
+
     @async_handler
     async  def configure_logging(self):
         """Configure logging paths"""
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
-            
+        self.disable_all_buttons()  
         try:
             raw_input = self.config_entry.get().strip()
             paths = [p.strip() for p in re.split(r'[,\s]+', raw_input) if p.strip()]
@@ -944,34 +986,49 @@ class DataloggerGUI:
             error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
             self.root.after(0, self.log_output, error_text)
             self.root.after(0, self.status_var.set, "Error occurred.")
+
+        finally:
+            self.root.after(0, self.update_button_states)
         
     @async_handler
     async def start_logging(self):
         """Start logging"""
+        dbg.info("=== start_logging called ===")
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
+            dbg.info("Verbose mode enabled, log level set to DEBUG")
 
         # Check if device is connected
         if not self.device_connected:
+            dbg.info("Device not connected, aborting start_logging")
             messagebox.showwarning("Warning", "Please connect to the device first.")
             self.root.after(0, self.status_var.set, "Not connected.")
             return
         
+        self.disable_all_buttons()
+
         try:
             serial = self.serial_entry.get().strip()
+            dbg.info(f"Serial number entered: '{serial}'")
             if not serial:
+                dbg.info("Serial number is empty, aborting")
                 messagebox.showwarning("Warning", "Please enter a valid serial number.")
                 self.root.after(0, self.status_var.set, "Missing serial number.")
                 return
 
             if not self.logging_configured:
+                dbg.info(f"Serial bytes: {serial.encode()}")
+                dbg.info(f"device_connected={self.device_connected}, logging_configured={self.logging_configured}")
+                dbg.info("Logging not yet configured — running configure + start flow")
                 self.root.after(0, self.log_output, "Configuring and starting logging...")
                 self.root.after(0, self.status_var.set, "Configuring and starting logging.")
 
                 # Parse paths safely (split by spaces, commas, etc.)
                 raw_input = self.config_entry.get().strip()
                 paths = [p.strip() for p in re.split(r'[,\s]+', raw_input) if p.strip()]
+                dbg.info(f"Parsed resource paths: {paths}")
                 if not paths:
+                    dbg.info("No paths provided, aborting")
                     messagebox.showwarning("Warning", "Please enter at least one resource path.")
                     self.root.after(0, self.status_var.set, "Missing configuration paths.")
                     return
@@ -979,10 +1036,20 @@ class DataloggerGUI:
                 # Capture stdout
                 output = io.StringIO()
                 with redirect_stdout(output):
+                    dbg.info(f"Calling tool.configure_device with serial={serial}, paths={paths}")
                     config_result = await tool.configure_device(serial, paths=paths)
+                    dbg.info(f"configure_device result: {config_result}")
                     start_result = None
                     if not (isinstance(config_result, dict) and not config_result.get("success", True)):
-                        start_result = await tool.start_logging(serial, args=None)
+                        dbg.info("Configuration succeeded, calling tool.start_logging")
+                        # start_result = await tool.start_logging(serial, args=None)
+                        dbg.info(f"About to call tool.start_logging, serial type={type(serial)}, value='{serial}'")
+                        try:
+                            start_result = await tool.start_logging(serial, args=None)
+                        except Exception as inner_e:
+                            dbg.info(f"tool.start_logging raised an exception: {type(inner_e).__name__}: {inner_e}")
+                            raise
+                        dbg.info(f"start_logging raw result: {start_result}, type={type(start_result)}")
 
                 # Update GUI with captured stdout first
                 self.root.after(0, self.log_output, output.getvalue())
@@ -990,54 +1057,70 @@ class DataloggerGUI:
                 # Handle configuration errors
                 if isinstance(config_result, dict) and not config_result.get("success", True):
                     error_msg = config_result.get("error", "Configuration failed (unknown error).")
+                    dbg.info(f"Configuration error: {error_msg}")
                     self.root.after(0, self.log_output, f"Error during configuration: {error_msg}\n")
                     self.root.after(0, self.status_var.set, "Configuration failed.")
                     return
 
                 self.logging_configured = True
+                dbg.info("logging_configured set to True")
 
                 # Handle start errors
                 if isinstance(start_result, dict) and not start_result.get("success", True):
                     error_msg = start_result.get("error", "Start failed (unknown error).")
+                    dbg.info(f"Start error: {error_msg}")
                     self.root.after(0, self.log_output, f"Error during start: {error_msg}\n")
                     self.root.after(0, self.status_var.set, "Error occurred while starting.")
                     return
 
                 # Success path
+                dbg.info(f"Logging successfully started on device {serial}")
                 self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
                 self.logging_active = True
                 self.logging_serial = serial
                 self.update_button_states()
                 self.root.after(2000, self.logging_data)
+                dbg.info("Button states updated, logging_data scheduled in 2000ms")
 
             else:
                 # Already configured — just start logging
+                dbg.info("Logging already configured — skipping configure, calling start directly")
                 self.root.after(0, self.log_output, f"Starting logging on device {serial}...")
                 self.root.after(0, self.status_var.set, "Starting logging...")
 
                 output = io.StringIO()
                 with redirect_stdout(output):
+                    dbg.info(f"Calling tool.start_logging with serial={serial}")
                     start_result = await tool.start_logging(serial, args=None)
+                    dbg.info(f"start_logging result: {start_result}")
 
                 self.root.after(0, self.log_output, output.getvalue())
 
                 if isinstance(start_result, dict) and not start_result.get("success", True):
                     error_msg = start_result.get("error", "Start failed (unknown error).")
+                    dbg.info(f"Start error: {error_msg}")
                     self.root.after(0, self.log_output, f"Error during start: {error_msg}\n")
                     self.root.after(0, self.status_var.set, "Error occurred while starting.")
                     return
 
+                dbg.info(f"Logging successfully started on device {serial} (already configured path)")
                 self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
                 self.logging_active = True
                 self.update_button_states()
                 self.root.after(2000, self.logging_data)
+                dbg.info("Button states updated, logging_data scheduled in 2000ms")
 
         except Exception as e:
             error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
+            dbg.info(f"Exception caught in start_logging: {str(e)}")
             self.root.after(0, self.log_output, error_text)
             self.root.after(0, self.status_var.set, "Error occurred.")
+        
+        finally:
+            # Restore correct button states
+            self.root.after(0, self.update_button_states)
 
     @async_handler
     async def stop_logging(self):
@@ -1051,6 +1134,8 @@ class DataloggerGUI:
             self.root.after(0, self.status_var.set, "Not connected.")
             return
         
+        self.disable_all_buttons()
+
         try:
 
             serial = self.serial_entry.get().strip()
@@ -1085,10 +1170,15 @@ class DataloggerGUI:
             error_text = f"Error: {str(e)}\n\n{traceback.format_exc()}"
             self.root.after(0, self.log_output, error_text)
             self.root.after(0, self.status_var.set, "Error occurred")
+
+        finally:
+            # Restore correct button states
+            self.root.after(0, self.update_button_states)
         
     @async_handler
     async def fetch_data(self):
         """Fetch data from devices"""
+        self.disable_all_buttons()
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
         dbg.info(f"fetch_data called")
@@ -1113,15 +1203,27 @@ class DataloggerGUI:
             self.root.after(0, self.status_var.set, "Cannot load data - logging is active")
             return
 
-        # Get output directory and convert to absolute path
-        output_dir = os.path.abspath(self.output_entry.get().strip())
-        if not output_dir:
-            messagebox.showwarning("Warning", "Please specify an output directory")
+        # Get output directory
+        raw_path = self.output_entry.get().strip()
+        if not raw_path:
+            # Default to the directory where the app/exe resides
+            if getattr(sys, 'frozen', False):
+                # Running as a PyInstaller .exe
+                output_dir = os.path.dirname(sys.executable)
+            else:
+                # Running as a .py script
+                output_dir = os.path.dirname(os.path.abspath(__file__))
+        else:
+            output_dir = os.path.abspath(raw_path)
+
+        # Create directory if needed
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except OSError as e:
+            messagebox.showerror("Invalid Path", f"Could not create output directory:\n{e}")
+            self.root.after(0, self.update_button_states)
             return
 
-        # Convert to absolute path and create directory if needed
-        output_dir = os.path.abspath(output_dir)
-        os.makedirs(output_dir, exist_ok=True)
         self.root.after(0, self.log_output, f"Using directory: {output_dir}\n")
 
         try:
@@ -1192,7 +1294,7 @@ class DataloggerGUI:
                 self.fetching_active = False
                 return
             
-            self.root.after(0, self.log_output, "\nLogging completed successfully.")
+            #self.root.after(0, self.log_output, "\nLogging completed successfully.")
 
             # Steps 2-4: Run all file conversions in a background thread
             def conversion_worker():
@@ -1374,9 +1476,13 @@ class DataloggerGUI:
             self.fetching_active = False
             self.root.after(0, self.log_output, f"\nError: {str(e)}")
             self.root.after(0, self.status_var.set, "Error occurred")
+
+        finally:
+            self.root.after(0, self.update_button_states)
     
     @async_handler
     async def erase_memory(self):
+        self.disable_all_buttons()
         """Erase device memory"""
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
@@ -1416,6 +1522,9 @@ class DataloggerGUI:
             self.root.after(0, self.log_output, f"\nError: {error_msg}")
             self.root.after(0, self.status_var.set, "Error occurred")
             self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to erase memory: {error_msg}"))
+
+        finally:
+            self.root.after(0, self.update_button_states)
    
     def browse_output(self):
         """Browse for output directory"""
