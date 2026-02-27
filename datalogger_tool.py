@@ -68,6 +68,7 @@ async def stop_logging(serial, args):
                 boot_result['success'] = True
                 logging.info(f"Boot command accepted with status {boot_status}")
 
+            await sensor.disconnect()
             logging.info(f"Waiting 4 seconds for sensor {serial} to complete boot...")
             await asyncio.sleep(4)
             logging.info(f"Boot complete for device {serial}")
@@ -202,6 +203,8 @@ async def fetch_data(serial, args, output_dir=None, progress_callback=None):
             logging.info(f"Resetting device {serial} to system mode <5>")
             await sensor.set_system_mode(5)
 
+            await sensor.disconnect()
+
             return {'success': True, 'files_fetched': fetched_files, 'total_logs': total_logs}
 
     except Exception as e:
@@ -222,6 +225,7 @@ async def get_battery_level(serial):
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
             result = await sensor.get_resource("/System/Energy/Level")
+            logging.info(f"Battery level result: {result}")
             if result.get('success'):
                 data = result.get('data', b'')
                 if len(data) >= 1:
