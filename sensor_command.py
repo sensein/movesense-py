@@ -6,6 +6,7 @@ Based on the Bleak GATT client for cross-platform BLE communication.
 import logging
 import asyncio
 import os
+import traceback
 from bleak import BleakClient, BleakScanner
 from functools import reduce
 import struct
@@ -103,11 +104,13 @@ class SensorCommand:
         
     async def __aenter__(self):
         """Async context manager entry - discover and connect to device."""
+        self.logger.info(f"Entering context for device with serial ending: {self.end_of_serial}", stack_info=True)
         await self._discover_and_connect()
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - ensure proper disconnection."""
+        self.logger.info(f"Exiting context for device {self.device_name}", stack_info=True)
         await self.disconnect()
         return False  # Don't suppress exceptions
     
@@ -154,6 +157,11 @@ class SensorCommand:
             self.logger.setLevel(logging.getLogger().level)
             self.logger.info(f"Connected to {self.device_name}")
 
+            for service in self.client.services:
+                self.logger.info(f"Service: {service.uuid}")
+                for char in service.characteristics:
+                    self.logger.info(f"  Characteristic: {char.uuid}, properties: {char.properties}")
+
             # Start notifications
             await self.client.start_notify(
                 NOTIFY_CHARACTERISTIC_UUID, 
@@ -169,9 +177,22 @@ class SensorCommand:
             self.logger.info(f"Notifications enabled: {self.device_name}")
             return True
             
+        # except Exception as e:
+        #     self.logger.error(f"Connection failed: {e}\nPlease try again.")
+        #     raise RuntimeError(f"Failed to connect to {self.device_name}: {e}")
+
         except Exception as e:
+            # Debug: log what services were found before the failure (if any)
+            if self.client and hasattr(self.client, 'services') and self.client.services:
+                for service in self.client.services:
+                    self.logger.warning(f"Service found before failure: {service.uuid}")
+                    for char in service.characteristics:
+                        self.logger.warning(f"  Characteristic: {char.uuid}, properties: {char.properties}")
+            else:
+                self.logger.info("No services/characteristics discovered before failure")
             self.logger.error(f"Connection failed: {e}\nPlease try again.")
             raise RuntimeError(f"Failed to connect to {self.device_name}: {e}")
+        
         
     async def discover_device(self, end_of_serial: str) -> bool:
         """Discover device by serial number suffix. (Deprecated - use context manager instead)"""
@@ -203,6 +224,11 @@ class SensorCommand:
             )
             await self.client.connect()
             self.is_connected = True
+
+            for service in self.client.services:
+                self.logger.info(f"Service: {service.uuid}")
+                for char in service.characteristics:
+                    self.logger.info(f"  Characteristic: {char.uuid}, properties: {char.properties}")
             
             # Start notifications
             await self.client.start_notify(
@@ -213,18 +239,30 @@ class SensorCommand:
             self.logger.info(f"Connected to {self.device_name}")
             return True
             
+        # except Exception as e:
+        #     self.logger.error(f"Connection failed: {e}\nPlease try again.")
+        #     return False
         except Exception as e:
+            # Debug: log what services were found before the failure (if any)
+            if self.client and hasattr(self.client, 'services') and self.client.services:
+                for service in self.client.services:
+                    self.logger.info(f"Service found before failure: {service.uuid}")
+                    for char in service.characteristics:
+                        self.logger.info(f"  Characteristic: {char.uuid}, properties: {char.properties}")
+            else:
+                self.logger.info("No services/characteristics discovered before failure")
             self.logger.error(f"Connection failed: {e}\nPlease try again.")
-            return False
+            raise RuntimeError(f"Failed to connect to {self.device_name}: {e}")
     
     async def disconnect(self):
         """Disconnect from the BLE device."""
+        self.logger.info(f"Disconnecting from device {self.device_name}...")
         if self.client and self.is_connected:
             try:
                 await self.client.stop_notify(NOTIFY_CHARACTERISTIC_UUID)
                 await self.client.disconnect()
+                self.logger.info(f"Disconnected from device {self.device_name}")
                 self.is_connected = False
-                self.logger.info("Disconnected from device")
             except Exception as e:
                 self.logger.error(f"Disconnect error: {e}")
     
@@ -687,7 +725,7 @@ class SensorCommand:
         if response.get('response_code') == GSP_RESP_COMMAND_RESPONSE:
             status_code = response.get('status_code', 0)
             return {
-                'success': status_code == 200,
+                'success': status_code == 202,
                 'status_code': status_code,
                 'system_mode': system_mode,
                 'raw_data': response.get('raw_data')
