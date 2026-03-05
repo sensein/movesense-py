@@ -104,13 +104,13 @@ class SensorCommand:
         
     async def __aenter__(self):
         """Async context manager entry - discover and connect to device."""
-        self.logger.info(f"Entering context for device with serial ending: {self.end_of_serial}", stack_info=True)
+        #self.logger.info(f"Entering context for device with serial ending: {self.end_of_serial}", stack_info=True)
         await self._discover_and_connect()
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - ensure proper disconnection."""
-        self.logger.info(f"Exiting context for device {self.device_name}", stack_info=True)
+        #self.logger.info(f"Exiting context for device {self.device_name}", stack_info=True)
         await self.disconnect()
         return False  # Don't suppress exceptions
     

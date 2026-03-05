@@ -26,6 +26,9 @@ def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='m
     if edf_filename is None:
         edf_filename = os.path.splitext(csv_filename)[0] + '.edf'
 
+    if recording_start is None:
+        recording_start = datetime.now()
+
     # Read the CSV file - only first two columns
     print(f"Reading CSV file: {csv_filename}")
     try:
@@ -151,9 +154,13 @@ def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='m
 
     # Create EDF+ file
     print(f"\nCreating EDF+ file: {edf_filename}")
-    print(f"Recording start time: {recording_start.strftime('%Y-%m-%d %H:%M:%S')}")
+    #print(f"Recording start time: {recording_start.strftime('%Y-%m-%d %H:%M:%S')}")
+    if recording_start:
+        print(f"Recording start time: {recording_start.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        print(f"Recording start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (current time, none provided)")
     print(f"Writing {len(ecg_data)} samples...")
-    
+        
     try:
         f = pyedflib.EdfWriter(edf_filename, n_channels=1, file_type=FILETYPE_EDFPLUS)
         f.setSignalHeaders([signal_header])

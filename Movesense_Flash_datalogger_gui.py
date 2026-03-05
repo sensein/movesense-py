@@ -19,21 +19,55 @@ from contextlib import redirect_stdout
 import datalogger_tool as tool  
 import queue
 import threading
+import time
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
+# # Debug file logging setup
+# _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
+# #dbg = logging.getLogger("movesense.debug")
+# dbg = logging.root
+# dbg.setLevel(logging.DEBUG)
+# _fh = logging.FileHandler(_log_path, mode='a', encoding='utf-8')
+# _fh.setLevel(logging.DEBUG)
+# _fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+# dbg.addHandler(_fh)
+# dbg.propagate = False 
+# dbg.info("=== Application started ===")
+
+# def get_local_bt_info():
+#     try:
+#         result = subprocess.run(
+#             ["powershell", "-Command",
+#              "Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName, Status | Format-List"],
+#             capture_output=True, text=True
+#         )
+#         dbg.info(f"Local BT adapter info:\n{result.stdout}")
+#     except Exception as e:
+#         dbg.warning(f"Could not get BT adapter info: {e}")
+
 # Debug file logging setup
-_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
-#dbg = logging.getLogger("movesense.debug")
+_start_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+# When frozen by PyInstaller, write log next to the .exe; otherwise next to the script
+if getattr(sys, 'frozen', False):
+    _base_dir = os.path.dirname(sys.executable)
+else:
+    _base_dir = os.path.dirname(os.path.abspath(__file__))
+
+_log_path = os.path.join(_base_dir, f"debug_{_start_ts}.log")
+
 dbg = logging.root
 dbg.setLevel(logging.DEBUG)
-_fh = logging.FileHandler(_log_path, mode='a', encoding='utf-8')
+_fh = logging.FileHandler(_log_path, mode='w', encoding='utf-8')
 _fh.setLevel(logging.DEBUG)
 _fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 dbg.addHandler(_fh)
-dbg.propagate = False 
+dbg.propagate = False
 dbg.info("=== Application started ===")
+#get_local_bt_info()
+
 
 class AdvancedConfigDialog:
     """Dialog for advanced configuration options"""
@@ -1191,11 +1225,13 @@ class DataloggerGUI:
         
         serial = self.serial_entry.get().strip()
         if not serial:
+            dbg.warning("Fetch aborted: serial missing")
             messagebox.showwarning("Warning", "Please enter a valid serial number")
             return
         
         # Add this check at the beginning
         if self.logging_active:
+            dbg.warning("Fetch aborted: logging is active")
             messagebox.showwarning(
                 "Logging Active", 
                 "Cannot load data while logging is active. Please stop logging first."
@@ -1205,6 +1241,7 @@ class DataloggerGUI:
 
         # Get output directory
         raw_path = self.output_entry.get().strip()
+        dbg.info(f"Raw output path: '{raw_path}'")
         if not raw_path:
             # Default to the directory where the app/exe resides
             if getattr(sys, 'frozen', False):
@@ -1216,10 +1253,13 @@ class DataloggerGUI:
         else:
             output_dir = os.path.abspath(raw_path)
 
+        dbg.info(f"Resolved output_dir: '{output_dir}'")
+
         # Create directory if needed
         try:
             os.makedirs(output_dir, exist_ok=True)
         except OSError as e:
+            dbg.error(f"Failed to create output directory: {e}")
             messagebox.showerror("Invalid Path", f"Could not create output directory:\n{e}")
             self.root.after(0, self.update_button_states)
             return
@@ -1227,6 +1267,7 @@ class DataloggerGUI:
         self.root.after(0, self.log_output, f"Using directory: {output_dir}\n")
 
         try:
+            dbg.info("Starting fetch process")
             self.root.after(0, self.log_output, f"\nLoading data from device {serial}.")
             self.root.after(0, self.status_var.set, "Loading data from device")
 
@@ -1236,6 +1277,7 @@ class DataloggerGUI:
 
             # Set logging active flag 
             self.fetching_active = True
+            dbg.info("Scheduling logging_data watchdog in 2000 ms")
             self.root.after(2000, self.logging_data)
 
             # Capture stdout to show in GUI
@@ -1243,16 +1285,19 @@ class DataloggerGUI:
 
             # Progress tracking variables
             self.total_logs = 0
+            self.total_bytes = 0
 
-            def progress_callback(bytes_downloaded, log_id, total_size, current_log_num=1, total_log_count=1, file_sizes=None, bytes_downloaded_so_far=0, total_bytes=0, has_known_size=True):
+            def progress_callback(bytes_downloaded, log_id, total_size, current_log_num=1, total_log_count=1, file_sizes=None, bytes_downloaded_so_far=0, total_bytes=0, has_known_size=True):   
                 # Set total logs if not set (first callback)
                 if self.total_logs == 0 and total_log_count > 0:
                     self.total_logs = total_log_count
                     self.total_bytes = total_bytes
+                    dbg.debug(f"progress_callback init: total_logs={total_log_count}, total_bytes={total_bytes}")
 
                 # Update current file progress
                 if total_size > 0:
                     file_percent = min(100, (bytes_downloaded / total_size) * 100)
+                    dbg.debug(f"progress_callback: log_id={log_id}, {bytes_downloaded}/{total_size} bytes ({file_percent:.1f}%)")
                     self.root.after(0, self.update_file_progress, 
                         file_percent, bytes_downloaded, total_size, log_id)
                 
@@ -1281,6 +1326,7 @@ class DataloggerGUI:
                 # Step 1: Fetch data
                 dbg.info(f"Step 1: Starting BLE fetch for serial={serial}, output_dir={output_dir}")
                 result = await tool.fetch_data(serial=serial, args=None, output_dir=output_dir, progress_callback=progress_callback)
+                dbg.info(f"Step 1: fetch_data result={result}")
                 self.logging_configured = False
                
             # Update GUI with fetch output
@@ -1300,6 +1346,7 @@ class DataloggerGUI:
             def conversion_worker():
                 try:
                     dbg.info(f"conversion_worker started, thread={threading.current_thread().name}")
+                    dbg.info(f"conversion_worker thread id={threading.get_ident()}")
 
                     # Step 2: Convert SBEM to JSON
                     self._log_queue.put(('log', "\n--- Converting SBEM to JSON ---"))
@@ -1324,6 +1371,7 @@ class DataloggerGUI:
                     else:
                         for sbem_file in sbem_files:
                             dbg.info(f"Step 2: Converting {sbem_file}")
+                            dbg.info(f"Step 2: Converting {sbem_file} (size={os.path.getsize(sbem_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {sbem_file}"))
 
                             original_dir = os.path.dirname(sbem_file)
@@ -1349,6 +1397,8 @@ class DataloggerGUI:
                             if conv_output:
                                 self._log_queue.put(('log', conv_output))
                             
+                            conv_process.wait()
+                            time.sleep(0.3)
                             if conv_process.returncode != 0:
                                 dbg.warning(f"Step 2: SBEM conversion failed for {sbem_filename}, returncode={conv_process.returncode}")
                                 self._log_queue.put(('log', f"Warning: Conversion failed for {sbem_filename}\n"))
@@ -1360,6 +1410,7 @@ class DataloggerGUI:
                                 if utc_time:
                                     self._log_queue.put(('log', f"UTC time from file: {utc_time}"))
                                     self.rename_files_with_utc(json_file, utc_time)
+                                    dbg.info(f"Step 2: Renamed files based on UTC time for {json_file}")
                                 
                                 new_sbem_path = os.path.join(sbem_folder, sbem_filename)
                                 try:
@@ -1395,6 +1446,7 @@ class DataloggerGUI:
                     else:
                         for json_file in json_files:
                             dbg.info(f"Step 3: Converting {json_file}")
+                            dbg.info(f"Step 3: Converting {json_file} (size={os.path.getsize(json_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {json_file}"))
                             csv_file = os.path.splitext(json_file)[0] + '.csv'
                             try:
@@ -1437,6 +1489,7 @@ class DataloggerGUI:
                     else:
                         for csv_file in csv_files:
                             dbg.info(f"Step 4: Converting {csv_file}")
+                            dbg.info(f"Step 4: Converting {csv_file} (size={os.path.getsize(csv_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {csv_file}"))
                             edf_file = os.path.splitext(csv_file)[0] + '.edf'
                             try:
@@ -1444,7 +1497,9 @@ class DataloggerGUI:
                                     header = f.readline().strip()
                                 parts = header.split(',')
                                 utc_str = parts[5]
+                                dbg.debug(f"Step 4: Parsed UTC string='{utc_str}' from header of {csv_file}")
                                 utc_time_dt = datetime.strptime(utc_str[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                                dbg.debug(f"Step 4: Parsed utc_time_dt={utc_time_dt}")
                                 csv_to_edf_plus(csv_filename=csv_file,
                                             edf_filename=edf_file,
                                             sampling_freq=None,
@@ -1474,6 +1529,7 @@ class DataloggerGUI:
         
         except Exception as e:
             self.fetching_active = False
+            dbg.error(f"fetch_data outer exception: {str(e)}\n{traceback.format_exc()}")
             self.root.after(0, self.log_output, f"\nError: {str(e)}")
             self.root.after(0, self.status_var.set, "Error occurred")
 
