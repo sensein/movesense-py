@@ -1550,6 +1550,7 @@ class DataloggerGUI:
             )
             if not result:
                 self.log_output("\nMemory erase cancelled by user\n")
+                self.root.after(0, self.update_button_states)
                 return
         try:
             # Get serial number first
