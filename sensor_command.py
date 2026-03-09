@@ -6,7 +6,6 @@ Based on the Bleak GATT client for cross-platform BLE communication.
 import logging
 import asyncio
 import os
-import traceback
 from bleak import BleakClient, BleakScanner
 from functools import reduce
 import struct
@@ -348,6 +347,25 @@ class SensorCommand:
             self.logger.error(f"Command failed: {e}")
             raise
     
+    async def get_battery_level(self) -> Dict[str, Any]:
+        response = await self.get_resource("/System/Energy/Level")
+        logging.info(f"Battery level result: {response}")
+        
+        retval = {}
+        if response.get('success'):
+            status_code = response.get('status_code', 0)
+            if status_code == 200:  # HTTP OK
+                # Parse HELLO response data
+                command_data = response.get('data', b'')
+                
+                if len(command_data) >= 1:  # At least protocol version + null terminators
+                    dv = DataView(command_data)
+                    batt_level = dv.get_uint_8(0)
+                    
+                    retval.update({
+                        'battery_level': batt_level})
+        return retval
+
     async def get_status(self) -> Dict[str, Any]:
         """Get device status using HELLO command."""
         hello_command = bytearray([GSP_CMD_HELLO, 100])  # HELLO command with reference 100

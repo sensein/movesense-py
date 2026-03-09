@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import json
 import os
@@ -5,19 +6,27 @@ import csv
 import logging
 from datetime import datetime
 
+import aiofiles
+
 log = logging.getLogger(__name__)
 
 ECG_LSB_TO_MV = 0.000381469726563
 
-def convert_json_to_csv(input_file, output_file):
+async def convert_json_to_csv(input_file, output_file, progress_callback = None):
     """
     Convert a JSON file containing sensor data to CSV format.
     Works for ECG, ACC, GYRO, TEMP, MeasIMU6, MeasIMU9, and similar Meas* streams.
     """
-    with open(input_file, 'r') as f:
+    if progress_callback:
+        progress_callback(1, 5, "Parsing JSON")  # Initial progress callback for parsing step
+    async with aiofiles.open(input_file, 'r') as f:
         #print("Parsing JSON...")
         log.debug("Parsing JSON...")
-        content = json.load(f)
+        strcontent = await f.read()
+        content = json.loads(strcontent)
+
+    if progress_callback:
+        progress_callback(2, 5, "Parsing JSON")  # Initial progress callback for parsing step
 
     samples = content.get("Samples", [])
     #print(f"Total sample entries: {len(samples)}")
@@ -54,11 +63,11 @@ def convert_json_to_csv(input_file, output_file):
         
         # For IMU6/IMU9, we need to split into separate CSV files per sensor type
         if stream_name in ["MeasIMU6", "MeasIMU9"]:
-            process_imu_stream(stream_name, entries, output_file, relative_time, utc_time_str)
+            await process_imu_stream(stream_name, entries, output_file, relative_time, utc_time_str)
         elif stream_name == "MeasHR":
-            process_hr_stream(stream_name, entries, output_file, relative_time, utc_time_str)
+            await process_hr_stream(stream_name, entries, output_file, relative_time, utc_time_str)
         else:
-            process_regular_stream(stream_name, entries, output_file, relative_time, utc_time_str)
+            await process_regular_stream(stream_name, entries, output_file, relative_time, utc_time_str, progress_callback)
 
 def get_missing_value(stream_name):
     """Return appropriate missing value based on stream type."""
@@ -170,7 +179,7 @@ def process_hr_stream(stream_name, entries, output_file, relative_time, utc_time
     #print(f"Saved {len(all_data)} samples to {stream_output}")
     log.debug(f"Saved {len(all_data)} samples to {stream_output}")
 
-def process_imu_stream(stream_name, entries, output_file, relative_time, utc_time_str):
+async def process_imu_stream(stream_name, entries, output_file, relative_time, utc_time_str):
     """Process IMU6/IMU9 streams which contain multiple sensor arrays."""
 
     if len(entries) < 2:
@@ -206,8 +215,8 @@ def process_imu_stream(stream_name, entries, output_file, relative_time, utc_tim
 
     dt = expected_chunk_dt / samples_per_chunk
     freq_hz = 1000.0 / dt
-    #print(f"  Estimated sample interval: {dt:.4f} ms  →  {freq_hz:.2f} Hz")
-    log.debug(f"Estimated sample interval: {dt:.4f} ms  →  {freq_hz:.2f} Hz, row 210")
+    #print(f"  Estimated sample interval: {dt:.4f} ms  ->  {freq_hz:.2f} Hz")
+    log.debug(f"Estimated sample interval: {dt:.4f} ms  ->  {freq_hz:.2f} Hz, row 210")
     
     # Collect data by sensor type (Acc, Gyro, Magn)
     sensor_data = {}
@@ -256,7 +265,7 @@ def process_imu_stream(stream_name, entries, output_file, relative_time, utc_tim
         
         #print(f"Writing {len(data)} samples to {stream_output}")
         log.debug(f"Writing {len(data)} samples to {stream_output}")
-        with open(stream_output, "w", newline="") as csvfile:
+        async with aiofiles.open(stream_output, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
             
             first_val = data[0][1]
@@ -264,18 +273,18 @@ def process_imu_stream(stream_name, entries, output_file, relative_time, utc_tim
                 header = ["Timestamp_ms", "X", "Y", "Z", "RelativeTime", relative_time, "UTC", utc_time_str]
             else:
                 header = ["Timestamp_ms", "Value", "RelativeTime", relative_time, "UTC", utc_time_str]
-            writer.writerow(header)
+            await writer.writerow(header)
             
             for ts, val in data:
                 if isinstance(val, list):
-                    writer.writerow([ts] + [f"{v:.6f}" for v in val])
+                    await writer.writerow([ts] + [f"{v:.6f}" for v in val])
                 else:
-                    writer.writerow([ts, f"{val:.6f}"])
+                    await writer.writerow([ts, f"{val:.6f}"])
         
         #print(f"Saved {len(data)} samples to {stream_output}")
         log.debug(f"Saved {len(data)} samples to {stream_output}")
 
-def process_regular_stream(stream_name, entries, output_file, relative_time, utc_time_str):
+async def process_regular_stream(stream_name, entries, output_file, relative_time, utc_time_str, progress_callback=None):
     """Process regular (non-IMU) data streams, detect sample-level gaps, and fill missing areas with -1.5mV."""
 
     if not entries:
@@ -285,9 +294,7 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
 
     all_data = []
     prev_dt = None  # Sample interval (ms)
-    #print(f"\nProcessing stream: {stream_name}")
-    log.debug(f"Processing stream: {stream_name}")
-
+    # log.debug(f"Processing stream: {stream_name}")
     # Flatten all chunks into (timestamp, value) pairs ---
     for chunk_idx, entry in enumerate(entries):
         # Extract timestamp
@@ -341,7 +348,7 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
             continue
 
         # --- Estimate dt (per-sample interval) if not yet known ---
-        log.debug(f"[chunk {chunk_idx}] prev_dt={prev_dt}, checking if dt estimation needed...")
+        # log.debug(f"[chunk {chunk_idx}] prev_dt={prev_dt}, checking if dt estimation needed...")
         if prev_dt is None and chunk_idx + 1 < len(entries):
             next_ts = entries[chunk_idx + 1].get("Timestamp") or entries[chunk_idx + 1].get("timestamp")
             log.debug(f"[chunk {chunk_idx}] next_ts={next_ts} (from chunk {chunk_idx + 1})")
@@ -352,13 +359,14 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
                 log.debug(f"[chunk {chunk_idx}] dt estimated: ({next_ts} - {timestamp}) / {n} = {prev_dt:.3f} ms ({1000/prev_dt:.2f} Hz)")
             else:
                 prev_dt = 5.0  # fallback
-                log.debug(f"[chunk {chunk_idx}] next_ts invalid or not > timestamp → fallback prev_dt=5.0 ms")
+                log.debug(f"[chunk {chunk_idx}] next_ts invalid or not > timestamp -> fallback prev_dt=5.0 ms")
         elif prev_dt is None:
             prev_dt = 5.0
-            log.debug(f"[chunk {chunk_idx}] no next chunk available → fallback prev_dt=5.0 ms")
+            log.debug(f"[chunk {chunk_idx}] no next chunk available -> fallback prev_dt=5.0 ms")
         else:
-            log.debug(f"[chunk {chunk_idx}] prev_dt already set to {prev_dt:.3f} ms, skipping estimation")
-
+            # log.debug(f"[chunk {chunk_idx}] prev_dt already set to {prev_dt:.3f} ms, skipping estimation")
+            pass
+            
         # --- Append all samples with estimated timestamps ---
         # log.debug(f"[chunk {chunk_idx}] appending {n} samples starting at ts={timestamp}, prev_dt={prev_dt:.3f}")
         # for i, val in enumerate(values):
@@ -366,19 +374,19 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
         #     all_data.append((ts, val))
         # log.debug(f"[chunk {chunk_idx}] all_data size now={len(all_data)}")
         # PRE-LOOP: log everything we are about to iterate over
-        log.debug(f"[chunk {chunk_idx}][PRE-LOOP] n={n}, timestamp={timestamp!r} (type={type(timestamp).__name__}), prev_dt={prev_dt!r} (type={type(prev_dt).__name__})")
-        log.debug(f"[chunk {chunk_idx}][PRE-LOOP] values type={type(values).__name__}, len={len(values)}, first_val={values[0]!r} (type={type(values[0]).__name__}), last_val={values[-1]!r} (type={type(values[-1]).__name__})")
+        # log.debug(f"[chunk {chunk_idx}][PRE-LOOP] n={n}, timestamp={timestamp!r} (type={type(timestamp).__name__}), prev_dt={prev_dt!r} (type={type(prev_dt).__name__})")
+        # log.debug(f"[chunk {chunk_idx}][PRE-LOOP] values type={type(values).__name__}, len={len(values)}, first_val={values[0]!r} (type={type(values[0]).__name__}), last_val={values[-1]!r} (type={type(values[-1]).__name__})")
         try:
             for i, val in enumerate(values):
                 # INSIDE-LOOP: log every iteration
-                log.debug(f"[chunk {chunk_idx}][LOOP i={i}] val={val!r} (type={type(val).__name__}), ts_raw={timestamp + i * prev_dt!r}, ts_int={int(timestamp + i * prev_dt)}")
+                # log.debug(f"[chunk {chunk_idx}][LOOP i={i}] val={val!r} (type={type(val).__name__}), ts_raw={timestamp + i * prev_dt!r}, ts_int={int(timestamp + i * prev_dt)}")
                 ts = int(timestamp + i * prev_dt)
                 all_data.append((ts, val))
         except Exception as e:
             # EXCEPTION: log exactly where and what crashed
             log.error(f"[chunk {chunk_idx}][LOOP-CRASH] crashed at i={i}, val={val!r} (type={type(val).__name__}), timestamp={timestamp!r}, prev_dt={prev_dt!r}, error={type(e).__name__}: {e}")
             raise
-        log.debug(f"[chunk {chunk_idx}][POST-LOOP] all_data size now={len(all_data)}")
+        # log.debug(f"[chunk {chunk_idx}][POST-LOOP] all_data size now={len(all_data)}")
 
     log.debug(f"[process_regular_stream] chunk loop done, all_data size={len(all_data)}")
 
@@ -390,7 +398,7 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
     # --- Sort samples by timestamp ---
     log.debug(f"[process_regular_stream] sorting {len(all_data)} samples by timestamp...")
     all_data.sort(key=lambda x: x[0])
-    log.debug(f"[process_regular_stream] sort done. ts range: {all_data[0][0]} → {all_data[-1][0]}")
+    log.debug(f"[process_regular_stream] sort done. ts range: {all_data[0][0]} -> {all_data[-1][0]}")
 
     # --- Fill missing gaps ---
     filled_data = []
@@ -399,21 +407,21 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
 
     filled_data.append(all_data[0])
     prev_ts = all_data[0][0]
-    log.debug(f"[process_regular_stream] gap-fill start: first ts={prev_ts}, samples to process={len(all_data)-1}")
+    # log.debug(f"[process_regular_stream] gap-fill start: first ts={prev_ts}, samples to process={len(all_data)-1}")
 
     if is_ecg:
         missing_value = get_missing_value(stream_name)
         log.debug(f"[process_regular_stream] ECG missing_value={missing_value}")
         for ts, val in all_data[1:]:
             gap = ts - prev_ts
-            log.debug(f"[gap-fill] ts={ts}, prev_ts={prev_ts}, gap={gap:.1f} ms, threshold={prev_dt * 1.5:.1f} ms")
+            # log.debug(f"[gap-fill] ts={ts}, prev_ts={prev_ts}, gap={gap:.1f} ms, threshold={prev_dt * 1.5:.1f} ms")
             if gap > prev_dt * 1.5:
                 num_missing = int((gap // prev_dt) - 1)
-                log.debug(f"[gap-fill] gap exceeds threshold → num_missing={num_missing}")
+                log.debug(f"[gap-fill] gap exceeds threshold -> num_missing={num_missing}")
                 if num_missing > 0:
-                    log.warning(f"[gap-fill] ECG gap: {gap:.1f} ms → inserting {num_missing} fill samples (from {prev_ts} to {ts})")
-                    #print(f" ECG gap detected: {gap:.1f}ms → inserting {num_missing} missing samples (from {prev_ts} to {ts})")
-                    #log.debug(f" ECG gap detected: {gap:.1f}ms → inserting {num_missing} missing samples (from {prev_ts} to {ts})")
+                    log.warning(f"[gap-fill] ECG gap: {gap:.1f} ms -> inserting {num_missing} fill samples (from {prev_ts} to {ts})")
+                    #print(f" ECG gap detected: {gap:.1f}ms -> inserting {num_missing} missing samples (from {prev_ts} to {ts})")
+                    log.debug(f"[gap-fill] ECG gap detected: {gap:.1f}ms -> inserting {num_missing} missing samples (from {prev_ts} to {ts})")
                     for i in range(num_missing):
                         prev_ts += prev_dt
                         filled_data.append((int(prev_ts), missing_value))
@@ -434,8 +442,10 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
     base, _ = os.path.splitext(output_file)
     stream_output = f"{base}_{stream_name}.csv"
     log.debug(f"[process_regular_stream] writing CSV to {stream_output!r}")
-
-    with open(stream_output, "w", newline="") as csvfile:
+    if progress_callback:
+        progress_callback(0, len(filled_data), stream_name)
+    count = 0
+    async with aiofiles.open(stream_output, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
 
         first_val = filled_data[0][1]
@@ -446,19 +456,23 @@ def process_regular_stream(stream_name, entries, output_file, relative_time, utc
         else:
             header = ["Timestamp_ms", "Value", "RelativeTime", relative_time, "UTC", utc_time_str]
             log.debug("[process_regular_stream] using scalar Value header")
-        writer.writerow(header)
+        await writer.writerow(header)
 
         for ts, val in filled_data:
+            count += 1
+            if progress_callback and count % 100 == 0:
+                progress_callback(count, len(filled_data), stream_name)
+
             if isinstance(val, list):
-                writer.writerow([ts] + [f"{v:.6f}" for v in val])
+                await writer.writerow([ts] + [f"{v:.6f}" for v in val])
             else:
-                writer.writerow([ts, f"{val:.6f}"])
+                await writer.writerow([ts, f"{val:.6f}"])
 
     #print(f"Saved {len(filled_data)} samples to {stream_output}\n")
     log.debug(f"Saved {len(filled_data)} samples to {stream_output}\n")
     log.info(f"[process_regular_stream] Saved {len(filled_data)} samples to {stream_output}")
 
-def main():
+async def main():
     if len(sys.argv) < 3:
         #print(f"Usage: python {sys.argv[0]} <input_json_file> <output_csv_file>")
         log.error(f"Usage: python {sys.argv[0]} <input_json_file> <output_csv_file>")
@@ -466,7 +480,7 @@ def main():
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
-    convert_json_to_csv(input_file, output_file)
+    await convert_json_to_csv(input_file, output_file)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

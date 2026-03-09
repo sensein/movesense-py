@@ -1,6 +1,10 @@
+import asyncio
 import logging
+from logging import FileHandler
+import multiprocessing
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
+import aiofiles
 from async_tkinter_loop import async_handler, async_mainloop
 from csv2edf import csv_to_edf_plus
 from ms_json2csv import convert_json_to_csv
@@ -24,29 +28,6 @@ import time
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
-# # Debug file logging setup
-# _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
-# #dbg = logging.getLogger("movesense.debug")
-# dbg = logging.root
-# dbg.setLevel(logging.DEBUG)
-# _fh = logging.FileHandler(_log_path, mode='a', encoding='utf-8')
-# _fh.setLevel(logging.DEBUG)
-# _fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-# dbg.addHandler(_fh)
-# dbg.propagate = False 
-# dbg.info("=== Application started ===")
-
-# def get_local_bt_info():
-#     try:
-#         result = subprocess.run(
-#             ["powershell", "-Command",
-#              "Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName, Status | Format-List"],
-#             capture_output=True, text=True
-#         )
-#         dbg.info(f"Local BT adapter info:\n{result.stdout}")
-#     except Exception as e:
-#         dbg.warning(f"Could not get BT adapter info: {e}")
-
 # Debug file logging setup
 _start_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -58,14 +39,7 @@ else:
 
 _log_path = os.path.join(_base_dir, f"debug_{_start_ts}.log")
 
-dbg = logging.root
-dbg.setLevel(logging.DEBUG)
-_fh = logging.FileHandler(_log_path, mode='w', encoding='utf-8')
-_fh.setLevel(logging.DEBUG)
-_fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-dbg.addHandler(_fh)
-dbg.propagate = False
-dbg.info("=== Application started ===")
+logging.root.setLevel(logging.DEBUG)
 #get_local_bt_info()
 
 
@@ -80,7 +54,7 @@ class AdvancedConfigDialog:
         self.dialog.geometry("600x550")
         self.dialog.transient(parent)
         self.dialog.grab_set()
-        
+
         # Main frame
         main_frame = ttk.Frame(self.dialog, padding="20")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -560,21 +534,39 @@ class DataloggerGUI:
         # Configure row weights for resizing
         main_frame.rowconfigure(3, weight=1)
 
-        # Thread-safe queue for background thread → UI communication
+        # Set up queue for logging from background threads
         self._log_queue = queue.Queue()
+        _fh = FileHandler(_log_path, mode='w') # Open in write mode to start fresh each time
+        _fh.setLevel(logging.DEBUG)
+        _fh.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+        logging.getLogger().addHandler(_fh)
+
+        # Start log processing
         self._process_log_queue()
 
     def _process_log_queue(self):
         """Drain the log queue on the main thread - called repeatedly via after()"""
         try:
-            while True:
-                msg_type, args = self._log_queue.get_nowait()
-                if msg_type == 'log':
-                    self.log_output(args)
-                elif msg_type == 'status':
-                    self.status_var.set(args)
+            maxloop=1000
+            while self._log_queue.qsize() > 0 and maxloop > 0:
+                maxloop -= 1
+                msg = self._log_queue.get_nowait()
+                if isinstance(msg, logging.LogRecord):
+                    self._log_file_handler.emit(msg)
+                else:
+                    print(f"Processing log message: {msg}\n")  # Debug print
+                    msg_type, args = msg[0], msg[1]
+                    if msg_type == 'log':
+                        self.log_output(args)
+                    elif msg_type == 'status':
+                        self.status_var.set(args)
+                #print(f"queue size after processing: {self._log_queue.qsize()}, maxloop: {maxloop}\n")  # Debug print
         except queue.Empty:
             pass
+        except Exception as e:
+            print(f"Error processing log queue: {e}")
+            print(traceback.format_exc())
+            print()
         finally:
             self.root.after(50, self._process_log_queue)
 
@@ -824,7 +816,7 @@ class DataloggerGUI:
         """Check device status"""
         try:
             serial = self.serial_entry.get().strip()
-            dbg.info(f"check_status called, serial='{serial}")
+            logging.getLogger(__name__).info(f"check_status called, serial='{serial}")
 
             if not serial:
                 messagebox.showwarning("Warning", "Please enter a valid serial number.")
@@ -839,7 +831,7 @@ class DataloggerGUI:
             # Capture stdout to show in GUI
             output = io.StringIO()
             with redirect_stdout(output):
-                status = await tool.fetch_status(serial=serial, args=None)
+                status = await tool.fetch_status_and_battery(serial=serial, args=None)
 
             # Handle tool errors
             if isinstance(status, dict) and not status.get("success", True):
@@ -923,7 +915,7 @@ class DataloggerGUI:
             # Connection successful!
             self.device_connected = True
             self.last_connected_serial = serial
-            dbg.info(f"Connected successfully to {serial}, dlstate={status.get('dlstate')}, app_version={status.get('app_version')}")
+            logging.getLogger(__name__).info(f"Connected successfully to {serial}, dlstate={status.get('dlstate')}, app_version={status.get('app_version')}")
 
             # Sync logging_active with device state
             dlstate = status.get('dlstate', 1)
@@ -948,14 +940,14 @@ class DataloggerGUI:
                 print(f"  App name: {status.get('app_name', 'Unknown')}")
                 print(f"  App version: {status.get('app_version', 'Unknown')}")
                 print(f"  DataLogger state: {tool.DL_STATES[status.get('dlstate', 1)]}")
-            
+                print(f"  Battery level: {status.get('battery_level', 'Unknown')}%")
+
             # Update GUI with captured output
             self.root.after(0, self.log_output, output.getvalue())
             #self.root.after(0, self.status_var.set, "Status check completed.")
 
-            battery_result = await tool.get_battery_level(serial)
-            if battery_result.get('success'):
-                level = battery_result.get('battery_level', '?')
+            if status.get('battery_level') is not None:
+                level = status.get('battery_level', '?')
                 color = 'green' if isinstance(level, int) and level > 15 else 'red'
                 self.root.after(0, lambda l=level, c=color: self.battery_label.config(text=f"Battery: {l}%", foreground=c))
             else:
@@ -967,7 +959,7 @@ class DataloggerGUI:
             self.update_button_states()
                 
         except Exception as e:
-            dbg.error(f"check_status exception: {str(e)}\n{traceback.format_exc()}")
+            logging.getLogger(__name__).error(f"check_status exception: {str(e)}\n{traceback.format_exc()}")
             self.root.after(0, self.log_output, f"\nError: {str(e)}\n")
             self.root.after(0, self.status_var.set, "Error occurred")
             self.device_connected = False
@@ -1027,14 +1019,14 @@ class DataloggerGUI:
     @async_handler
     async def start_logging(self):
         """Start logging"""
-        dbg.info("=== start_logging called ===")
+        logging.getLogger(__name__).info("=== start_logging called ===")
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
-            dbg.info("Verbose mode enabled, log level set to DEBUG")
+            logging.getLogger(__name__).info("Verbose mode enabled, log level set to DEBUG")
 
         # Check if device is connected
         if not self.device_connected:
-            dbg.info("Device not connected, aborting start_logging")
+            logging.getLogger(__name__).info("Device not connected, aborting start_logging")
             messagebox.showwarning("Warning", "Please connect to the device first.")
             self.root.after(0, self.status_var.set, "Not connected.")
             return
@@ -1043,26 +1035,26 @@ class DataloggerGUI:
 
         try:
             serial = self.serial_entry.get().strip()
-            dbg.info(f"Serial number entered: '{serial}'")
+            logging.getLogger(__name__).info(f"Serial number entered: '{serial}'")
             if not serial:
-                dbg.info("Serial number is empty, aborting")
+                logging.getLogger(__name__).info("Serial number is empty, aborting")
                 messagebox.showwarning("Warning", "Please enter a valid serial number.")
                 self.root.after(0, self.status_var.set, "Missing serial number.")
                 return
 
             if not self.logging_configured:
-                dbg.info(f"Serial bytes: {serial.encode()}")
-                dbg.info(f"device_connected={self.device_connected}, logging_configured={self.logging_configured}")
-                dbg.info("Logging not yet configured — running configure + start flow")
+                logging.getLogger(__name__).info(f"Serial bytes: {serial.encode()}")
+                logging.getLogger(__name__).info(f"device_connected={self.device_connected}, logging_configured={self.logging_configured}")
+                logging.getLogger(__name__).info("Logging not yet configured — running configure + start flow")
                 self.root.after(0, self.log_output, "Configuring and starting logging...")
                 self.root.after(0, self.status_var.set, "Configuring and starting logging.")
 
                 # Parse paths safely (split by spaces, commas, etc.)
                 raw_input = self.config_entry.get().strip()
                 paths = [p.strip() for p in re.split(r'[,\s]+', raw_input) if p.strip()]
-                dbg.info(f"Parsed resource paths: {paths}")
+                logging.getLogger(__name__).info(f"Parsed resource paths: {paths}")
                 if not paths:
-                    dbg.info("No paths provided, aborting")
+                    logging.getLogger(__name__).info("No paths provided, aborting")
                     messagebox.showwarning("Warning", "Please enter at least one resource path.")
                     self.root.after(0, self.status_var.set, "Missing configuration paths.")
                     return
@@ -1070,20 +1062,20 @@ class DataloggerGUI:
                 # Capture stdout
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    dbg.info(f"Calling tool.configure_device with serial={serial}, paths={paths}")
+                    logging.getLogger(__name__).info(f"Calling tool.configure_device with serial={serial}, paths={paths}")
                     config_result = await tool.configure_device(serial, paths=paths)
-                    dbg.info(f"configure_device result: {config_result}")
+                    logging.getLogger(__name__).info(f"configure_device result: {config_result}")
                     start_result = None
                     if not (isinstance(config_result, dict) and not config_result.get("success", True)):
-                        dbg.info("Configuration succeeded, calling tool.start_logging")
+                        logging.getLogger(__name__).info("Configuration succeeded, calling tool.start_logging")
                         # start_result = await tool.start_logging(serial, args=None)
-                        dbg.info(f"About to call tool.start_logging, serial type={type(serial)}, value='{serial}'")
+                        logging.getLogger(__name__).info(f"About to call tool.start_logging, serial type={type(serial)}, value='{serial}'")
                         try:
                             start_result = await tool.start_logging(serial, args=None)
                         except Exception as inner_e:
-                            dbg.info(f"tool.start_logging raised an exception: {type(inner_e).__name__}: {inner_e}")
+                            logging.getLogger(__name__).info(f"tool.start_logging raised an exception: {type(inner_e).__name__}: {inner_e}")
                             raise
-                        dbg.info(f"start_logging raw result: {start_result}, type={type(start_result)}")
+                        logging.getLogger(__name__).info(f"start_logging raw result: {start_result}, type={type(start_result)}")
 
                 # Update GUI with captured stdout first
                 self.root.after(0, self.log_output, output.getvalue())
@@ -1091,64 +1083,64 @@ class DataloggerGUI:
                 # Handle configuration errors
                 if isinstance(config_result, dict) and not config_result.get("success", True):
                     error_msg = config_result.get("error", "Configuration failed (unknown error).")
-                    dbg.info(f"Configuration error: {error_msg}")
+                    logging.getLogger(__name__).info(f"Configuration error: {error_msg}")
                     self.root.after(0, self.log_output, f"Error during configuration: {error_msg}\n")
                     self.root.after(0, self.status_var.set, "Configuration failed.")
                     return
 
                 self.logging_configured = True
-                dbg.info("logging_configured set to True")
+                logging.getLogger(__name__).info("logging_configured set to True")
 
                 # Handle start errors
                 if isinstance(start_result, dict) and not start_result.get("success", True):
                     error_msg = start_result.get("error", "Start failed (unknown error).")
-                    dbg.info(f"Start error: {error_msg}")
+                    logging.getLogger(__name__).info(f"Start error: {error_msg}")
                     self.root.after(0, self.log_output, f"Error during start: {error_msg}\n")
                     self.root.after(0, self.status_var.set, "Error occurred while starting.")
                     return
 
                 # Success path
-                dbg.info(f"Logging successfully started on device {serial}")
+                logging.getLogger(__name__).info(f"Logging successfully started on device {serial}")
                 self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
                 self.logging_active = True
                 self.logging_serial = serial
                 self.update_button_states()
                 self.root.after(2000, self.logging_data)
-                dbg.info("Button states updated, logging_data scheduled in 2000ms")
+                logging.getLogger(__name__).info("Button states updated, logging_data scheduled in 2000ms")
 
             else:
                 # Already configured — just start logging
-                dbg.info("Logging already configured — skipping configure, calling start directly")
+                logging.getLogger(__name__).info("Logging already configured — skipping configure, calling start directly")
                 self.root.after(0, self.log_output, f"Starting logging on device {serial}...")
                 self.root.after(0, self.status_var.set, "Starting logging...")
 
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    dbg.info(f"Calling tool.start_logging with serial={serial}")
+                    logging.getLogger(__name__).info(f"Calling tool.start_logging with serial={serial}")
                     start_result = await tool.start_logging(serial, args=None)
-                    dbg.info(f"start_logging result: {start_result}")
+                    logging.getLogger(__name__).info(f"start_logging result: {start_result}")
 
                 self.root.after(0, self.log_output, output.getvalue())
 
                 if isinstance(start_result, dict) and not start_result.get("success", True):
                     error_msg = start_result.get("error", "Start failed (unknown error).")
-                    dbg.info(f"Start error: {error_msg}")
+                    logging.getLogger(__name__).info(f"Start error: {error_msg}")
                     self.root.after(0, self.log_output, f"Error during start: {error_msg}\n")
                     self.root.after(0, self.status_var.set, "Error occurred while starting.")
                     return
 
-                dbg.info(f"Logging successfully started on device {serial} (already configured path)")
+                logging.getLogger(__name__).info(f"Logging successfully started on device {serial} (already configured path)")
                 self.root.after(0, self.log_output, f"Logging started on device {serial}. Recording data...")
                 self.root.after(0, self.status_var.set, "Logging started.")
                 self.logging_active = True
                 self.update_button_states()
                 self.root.after(2000, self.logging_data)
-                dbg.info("Button states updated, logging_data scheduled in 2000ms")
+                logging.getLogger(__name__).info("Button states updated, logging_data scheduled in 2000ms")
 
         except Exception as e:
             error_text = f"\nError: {str(e)}\n\n{traceback.format_exc()}"
-            dbg.info(f"Exception caught in start_logging: {str(e)}")
+            logging.getLogger(__name__).info(f"Exception caught in start_logging: {str(e)}")
             self.root.after(0, self.log_output, error_text)
             self.root.after(0, self.status_var.set, "Error occurred.")
         
@@ -1215,7 +1207,7 @@ class DataloggerGUI:
         self.disable_all_buttons()
         if self.verbose_var.get():
             logging.getLogger().setLevel(logging.DEBUG)
-        dbg.info(f"fetch_data called")
+        logging.getLogger(__name__).info(f"fetch_data called")
 
         # Check if device is connected
         if not self.device_connected:
@@ -1225,13 +1217,13 @@ class DataloggerGUI:
         
         serial = self.serial_entry.get().strip()
         if not serial:
-            dbg.warning("Fetch aborted: serial missing")
+            logging.getLogger(__name__).warning("Fetch aborted: serial missing")
             messagebox.showwarning("Warning", "Please enter a valid serial number")
             return
         
         # Add this check at the beginning
         if self.logging_active:
-            dbg.warning("Fetch aborted: logging is active")
+            logging.getLogger(__name__).warning("Fetch aborted: logging is active")
             messagebox.showwarning(
                 "Logging Active", 
                 "Cannot load data while logging is active. Please stop logging first."
@@ -1241,7 +1233,7 @@ class DataloggerGUI:
 
         # Get output directory
         raw_path = self.output_entry.get().strip()
-        dbg.info(f"Raw output path: '{raw_path}'")
+        logging.getLogger(__name__).info(f"Raw output path: '{raw_path}'")
         if not raw_path:
             # Default to the directory where the app/exe resides
             if getattr(sys, 'frozen', False):
@@ -1253,13 +1245,13 @@ class DataloggerGUI:
         else:
             output_dir = os.path.abspath(raw_path)
 
-        dbg.info(f"Resolved output_dir: '{output_dir}'")
+        logging.getLogger(__name__).info(f"Resolved output_dir: '{output_dir}'")
 
         # Create directory if needed
         try:
             os.makedirs(output_dir, exist_ok=True)
         except OSError as e:
-            dbg.error(f"Failed to create output directory: {e}")
+            logging.getLogger(__name__).error(f"Failed to create output directory: {e}")
             messagebox.showerror("Invalid Path", f"Could not create output directory:\n{e}")
             self.root.after(0, self.update_button_states)
             return
@@ -1267,7 +1259,7 @@ class DataloggerGUI:
         self.root.after(0, self.log_output, f"Using directory: {output_dir}\n")
 
         try:
-            dbg.info("Starting fetch process")
+            logging.getLogger(__name__).info("Starting fetch process")
             self.root.after(0, self.log_output, f"\nLoading data from device {serial}.")
             self.root.after(0, self.status_var.set, "Loading data from device")
 
@@ -1277,7 +1269,7 @@ class DataloggerGUI:
 
             # Set logging active flag 
             self.fetching_active = True
-            dbg.info("Scheduling logging_data watchdog in 2000 ms")
+            logging.getLogger(__name__).info("Scheduling logging_data watchdog in 2000 ms")
             self.root.after(2000, self.logging_data)
 
             # Capture stdout to show in GUI
@@ -1292,12 +1284,12 @@ class DataloggerGUI:
                 if self.total_logs == 0 and total_log_count > 0:
                     self.total_logs = total_log_count
                     self.total_bytes = total_bytes
-                    dbg.debug(f"progress_callback init: total_logs={total_log_count}, total_bytes={total_bytes}")
+                    logging.getLogger(__name__).debug(f"progress_callback init: total_logs={total_log_count}, total_bytes={total_bytes}")
 
                 # Update current file progress
                 if total_size > 0:
                     file_percent = min(100, (bytes_downloaded / total_size) * 100)
-                    dbg.debug(f"progress_callback: log_id={log_id}, {bytes_downloaded}/{total_size} bytes ({file_percent:.1f}%)")
+                    logging.getLogger(__name__).debug(f"progress_callback: log_id={log_id}, {bytes_downloaded}/{total_size} bytes ({file_percent:.1f}%)")
                     self.root.after(0, self.update_file_progress, 
                         file_percent, bytes_downloaded, total_size, log_id)
                 
@@ -1324,14 +1316,14 @@ class DataloggerGUI:
 
             with redirect_stdout(output):
                 # Step 1: Fetch data
-                dbg.info(f"Step 1: Starting BLE fetch for serial={serial}, output_dir={output_dir}")
+                logging.getLogger(__name__).info(f"Step 1: Starting BLE fetch for serial={serial}, output_dir={output_dir}")
                 result = await tool.fetch_data(serial=serial, args=None, output_dir=output_dir, progress_callback=progress_callback)
-                dbg.info(f"Step 1: fetch_data result={result}")
+                logging.getLogger(__name__).info(f"Step 1: fetch_data result={result}")
                 self.logging_configured = False
                
             # Update GUI with fetch output
             self.root.after(0, self.hide_progress_area) 
-            dbg.info(f"Step 1: BLE fetch complete, success={result.get('success')}, files={result.get('files_fetched')}")
+            logging.getLogger(__name__).info(f"Step 1: BLE fetch complete, success={result.get('success')}, files={result.get('files_fetched')}")
             self.root.after(0, self.log_output, output.getvalue())
 
             if not result.get("success", False):
@@ -1342,12 +1334,9 @@ class DataloggerGUI:
             
             #self.root.after(0, self.log_output, "\nLogging completed successfully.")
 
-            # Steps 2-4: Run all file conversions in a background thread
-            def conversion_worker():
+            # Steps 2-4: Run all file conversions
+            async def file_format_conversion():
                 try:
-                    dbg.info(f"conversion_worker started, thread={threading.current_thread().name}")
-                    dbg.info(f"conversion_worker thread id={threading.get_ident()}")
-
                     # Step 2: Convert SBEM to JSON
                     self._log_queue.put(('log', "\n--- Converting SBEM to JSON ---"))
                     self._log_queue.put(('status', "Converting SBEM to JSON..."))
@@ -1365,13 +1354,13 @@ class DataloggerGUI:
                             if file.endswith('.sbem'):
                                 sbem_files.append(os.path.join(root_dir, file))
 
-                    dbg.info(f"Step 2: Found {len(sbem_files)} SBEM files to convert")
+                    logging.getLogger(__name__).info(f"Step 2: Found {len(sbem_files)} SBEM files to convert")
                     if not sbem_files:
                         self._log_queue.put(('log', "No SBEM files found to convert."))
                     else:
                         for sbem_file in sbem_files:
-                            dbg.info(f"Step 2: Converting {sbem_file}")
-                            dbg.info(f"Step 2: Converting {sbem_file} (size={os.path.getsize(sbem_file)} bytes)")
+                            logging.getLogger(__name__).info(f"Step 2: Converting {sbem_file}")
+                            logging.getLogger(__name__).info(f"Step 2: Converting {sbem_file} (size={os.path.getsize(sbem_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {sbem_file}"))
 
                             original_dir = os.path.dirname(sbem_file)
@@ -1385,32 +1374,34 @@ class DataloggerGUI:
                                 application_path = os.path.dirname(os.path.abspath(__file__))
 
                             sbem2json_exe = os.path.join(application_path, "sbem2json.exe")
-                            converter_cmd = [sbem2json_exe, "--sbem2json", sbem_file, "--output", json_file]
+                            converter_cmd = f'"{sbem2json_exe}" --sbem2json "{sbem_file}" --output "{json_file}"'
                             
-                            conv_process = subprocess.Popen(
+                            conv_process = await asyncio.create_subprocess_shell(
                                 converter_cmd,
                                 stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True
+                                stderr=subprocess.STDOUT
                             )
-                            conv_output, _ = conv_process.communicate()
+                            conv_output, _ = await conv_process.communicate()
                             if conv_output:
-                                self._log_queue.put(('log', conv_output))
+                                conv_output = conv_output.decode()
+                                stdout_lines = conv_output.strip().splitlines()
+                                for line in stdout_lines:
+                                    if "invalid map<K, T>" not in line and "SmlDescriptor::parseModifier:" not in line:
+                                        self._log_queue.put(('log', line))
                             
-                            conv_process.wait()
-                            time.sleep(0.3)
+                            await asyncio.sleep(0.3)
                             if conv_process.returncode != 0:
-                                dbg.warning(f"Step 2: SBEM conversion failed for {sbem_filename}, returncode={conv_process.returncode}")
+                                logging.getLogger(__name__).warning(f"Step 2: SBEM conversion failed for {sbem_filename}, returncode={conv_process.returncode}")
                                 self._log_queue.put(('log', f"Warning: Conversion failed for {sbem_filename}\n"))
                             else:
-                                dbg.info(f"Step 2: Created {json_file}")
+                                logging.getLogger(__name__).info(f"Step 2: Created {json_file}")
                                 self._log_queue.put(('log', f"\nCreated: {json_file}\n"))
                                 
                                 utc_time = self.extract_utc_time_from_json(json_file)
                                 if utc_time:
                                     self._log_queue.put(('log', f"UTC time from file: {utc_time}"))
                                     self.rename_files_with_utc(json_file, utc_time)
-                                    dbg.info(f"Step 2: Renamed files based on UTC time for {json_file}")
+                                    logging.getLogger(__name__).info(f"Step 2: Renamed files based on UTC time for {json_file}")
                                 
                                 new_sbem_path = os.path.join(sbem_folder, sbem_filename)
                                 try:
@@ -1426,7 +1417,7 @@ class DataloggerGUI:
                     # Step 3: Convert JSON to CSV
                     self._log_queue.put(('log', "\n--- Converting JSON to CSV ---"))
                     self._log_queue.put(('status', "Converting JSON to CSV..."))
-                    
+                    self.progress_frame.grid()  # Show progress bars for conversion steps
                     json_files = []
                     for root_dir, dirs, files in os.walk(output_dir):
                         if 'venv' in root_dir or '.venv' in root_dir or 'site-packages' in root_dir:
@@ -1440,24 +1431,32 @@ class DataloggerGUI:
                                 else:
                                     json_files.append(json_path)
                     
-                    dbg.info(f"Step 3: Found {len(json_files)} JSON files to convert to CSV")
+                    logging.getLogger(__name__).info(f"Step 3: Found {len(json_files)} JSON files to convert to CSV")
                     if not json_files:
                         self._log_queue.put(('log', "No JSON files found to convert"))
                     else:
+                        counter = 0
+                        
+                        self.reset_progress_bars()
                         for json_file in json_files:
-                            dbg.info(f"Step 3: Converting {json_file}")
-                            dbg.info(f"Step 3: Converting {json_file} (size={os.path.getsize(json_file)} bytes)")
+                            self.root.after(0, self.update_overall_progress, counter*100/len(json_files), counter, len(json_files))
+                            logging.getLogger(__name__).info(f"Step 3: Converting {json_file}")
+                            logging.getLogger(__name__).info(f"Step 3: Converting {json_file} (size={os.path.getsize(json_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {json_file}"))
+
                             csv_file = os.path.splitext(json_file)[0] + '.csv'
                             try:
-                                convert_json_to_csv(input_file=json_file, output_file=csv_file)
-                                dbg.info(f"Step 3: Created {csv_file}")
+                                await convert_json_to_csv(input_file=json_file, output_file=csv_file, progress_callback=self.update_csv_progress)
+                                logging.getLogger(__name__).info(f"Step 3: Created {csv_file}")
                                 self._log_queue.put(('log', f"\nCreated: {csv_file}"))
                             except Exception as e:
-                                dbg.error(f"Step 3: CSV conversion failed for {json_file}: {str(e)}")
+                                logging.getLogger(__name__).error(f"Step 3: CSV conversion failed for {json_file}: {str(e)}")
                                 self._log_queue.put(('log', f"Warning: CSV conversion failed for {json_file}: {str(e)}"))
-                            
+                            counter += 1
+                            self.root.after(0, self.update_overall_progress, counter*100/len(json_files), counter, len(json_files))
+                    
                     # Step 4: Convert CSV to EDF
+                    self.hide_progress_area()  # Hide progress bars- edf is fast enough that we don't need them for this step
                     self._log_queue.put(('log', "\n--- Converting CSV to EDF ---"))
                     self._log_queue.put(('status', "Converting CSV to EDF..."))
 
@@ -1480,7 +1479,7 @@ class DataloggerGUI:
                                 else:
                                     csv_files.append(csv_path)
 
-                    dbg.info(f"Step 4: Found {len(csv_files)} ECG CSV files to convert to EDF (total ECG CSVs: {csv_files_total})")
+                    logging.getLogger(__name__).info(f"Step 4: Found {len(csv_files)} ECG CSV files to convert to EDF (total ECG CSVs: {csv_files_total})")
                     if not csv_files:
                         if csv_files_total == 0:
                             self._log_queue.put(('log', "No CSV files found in directory"))
@@ -1488,48 +1487,50 @@ class DataloggerGUI:
                             self._log_queue.put(('log', "All CSV files already converted. No new EDF files to create."))
                     else:
                         for csv_file in csv_files:
-                            dbg.info(f"Step 4: Converting {csv_file}")
-                            dbg.info(f"Step 4: Converting {csv_file} (size={os.path.getsize(csv_file)} bytes)")
+                            logging.getLogger(__name__).info(f"Step 4: Converting {csv_file}")
+                            logging.getLogger(__name__).info(f"Step 4: Converting {csv_file} (size={os.path.getsize(csv_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {csv_file}"))
                             edf_file = os.path.splitext(csv_file)[0] + '.edf'
                             try:
-                                with open(csv_file, 'r') as f:
-                                    header = f.readline().strip()
+                                async with aiofiles.open(csv_file, 'r') as f:
+                                    header = await f.readline()
+                                    header = header.strip()
                                 parts = header.split(',')
                                 utc_str = parts[5]
-                                dbg.debug(f"Step 4: Parsed UTC string='{utc_str}' from header of {csv_file}")
+                                logging.getLogger(__name__).debug(f"Step 4: Parsed UTC string='{utc_str}' from header of {csv_file}")
                                 utc_time_dt = datetime.strptime(utc_str[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-                                dbg.debug(f"Step 4: Parsed utc_time_dt={utc_time_dt}")
-                                csv_to_edf_plus(csv_filename=csv_file,
+                                logging.getLogger(__name__).debug(f"Step 4: Parsed utc_time_dt={utc_time_dt}")
+                                await csv_to_edf_plus(csv_filename=csv_file,
                                             edf_filename=edf_file,
                                             sampling_freq=None,
                                             unit='mV',
                                             scale_factor=1,
                                             recording_start=utc_time_dt)
-                                dbg.info(f"Step 4: Created {edf_file}")
+                                logging.getLogger(__name__).info(f"Step 4: Created {edf_file}")
                                 self._log_queue.put(('log', f"\nCreated: {edf_file}"))
                             except Exception as e:
-                                dbg.error(f"Step 4: EDF conversion failed for {csv_file}: {str(e)}")
+                                logging.getLogger(__name__).error(f"Step 4: EDF conversion failed for {csv_file}: {str(e)}")
                                 self._log_queue.put(('log', f"Warning: EDF conversion failed for {csv_file}: {str(e)}"))
 
                     self.fetching_active = False
-                    dbg.info("conversion_worker completed successfully")
+                    logging.getLogger(__name__).info("conversion_worker completed successfully")
                     self._log_queue.put(('status', "All conversions completed."))
                     self._log_queue.put(('log', "All conversions completed."))
                     self._log_queue.put(('log', "\nDone!\n"))
 
                 except Exception as e:
                     self.fetching_active = False
-                    dbg.error(f"conversion_worker exception: {str(e)}\n{traceback.format_exc()}")
+                    logging.getLogger(__name__).error(f"conversion_worker exception: {str(e)}\n{traceback.format_exc()}")
                     self._log_queue.put(('log', f"\nError: {str(e)}"))
                     self._log_queue.put(('status', "Error occurred"))
 
-            threading.Thread(target=conversion_worker, daemon=True).start()
-            dbg.info("conversion_worker thread launched")
+            # threading.Thread(target=conversion_worker, daemon=True).start()
+            # logging.getLogger(__name__).info("conversion_worker thread launched")
+            await file_format_conversion()
         
         except Exception as e:
             self.fetching_active = False
-            dbg.error(f"fetch_data outer exception: {str(e)}\n{traceback.format_exc()}")
+            logging.getLogger(__name__).error(f"fetch_data outer exception: {str(e)}\n{traceback.format_exc()}")
             self.root.after(0, self.log_output, f"\nError: {str(e)}")
             self.root.after(0, self.status_var.set, "Error occurred")
 
@@ -1611,8 +1612,18 @@ class DataloggerGUI:
         text=f"Log {log_id}: {downloaded:,} / {total:,} bytes ({percent:.1f}%)"
         )
 
+    def update_csv_progress(self, processed, total, stream):
+        """Update CSV progress bar"""
+        percent = (processed / total) * 100 if total > 0 else 0
+        logging.getLogger().debug(f"update_csv_progress: {processed}/{total} ({percent:.1f}%)")
+        self.file_progress['value'] = percent
+        self.file_label.config(
+        text=f"CSV {stream}: {processed:,} / {total:,} rows ({percent:.1f}%)"
+        )
+
     def update_overall_progress(self, percent, current, total):
         """Update overall progress bar"""
+        logging.getLogger().debug(f"update_overall_progress: {current}/{total} ({percent:.1f}%)")
         self.overall_progress['value'] = percent
         self.overall_label.config(
             text=f"Files: {current} / {total} ({percent:.1f}%)"

@@ -15,6 +15,18 @@ async def fetch_status(serial, args):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
+
+async def fetch_status_and_battery(serial, args):
+    """Fetch status from a specific device."""
+    try:
+        async with SensorCommand(serial) as sensor:
+            result = await sensor.get_status()
+
+            result.update(await sensor.get_battery_level())
+            return result
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
 async def configure_device(serial, args = None, paths = None):
     """Configure a specific device."""
     try:
