@@ -1,3 +1,4 @@
+import asyncio
 import pandas as pd
 import numpy as np
 import pyedflib
@@ -215,7 +216,8 @@ def main():
         print(f"Error: File '{csv_filename}' not found!")
         return
 
-    csv_to_edf_plus(csv_filename, edf_filename, sampling_freq, unit, scale_factor)
+    #csv_to_edf_plus(csv_filename, edf_filename, sampling_freq, unit, scale_factor)
+    asyncio.run(csv_to_edf_plus(csv_filename, edf_filename, sampling_freq, unit, scale_factor))
 
 if __name__ == "__main__":
     main()
