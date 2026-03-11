@@ -1401,9 +1401,23 @@ class DataloggerGUI:
                                 if utc_time:
                                     self._log_queue.put(('log', f"UTC time from file: {utc_time}"))
                                     self.rename_files_with_utc(json_file, utc_time)
+                                    # Reconstruct renamed JSON path directly
+                                    dir_path = os.path.dirname(json_file)
+                                    base_name = os.path.splitext(os.path.basename(json_file))[0]
+                                    parts = base_name.split('_')
+                                    if len(parts) >= 4:
+                                        new_base = '_'.join(parts[:4])
+                                        json_file = os.path.join(dir_path, f"{new_base}_{utc_time}.json")
                                     logging.getLogger(__name__).info(f"Step 2: Renamed files based on UTC time for {json_file}")
+
+                                # Move JSON to json-files folder
+                                json_folder = os.path.join(output_dir, "json-files")
+                                os.makedirs(json_folder, exist_ok=True)
+
                                 
                                 new_sbem_path = os.path.join(sbem_folder, sbem_filename)
+                                new_json_path = os.path.join(json_folder, os.path.basename(json_file))
+                                
                                 try:
                                     if os.path.exists(new_sbem_path):
                                         os.remove(sbem_file)
@@ -1413,24 +1427,40 @@ class DataloggerGUI:
                                         self._log_queue.put(('log', f"Moved SBEM to: {new_sbem_path}"))
                                 except Exception as e:
                                     self._log_queue.put(('log', f"Warning: Could not move SBEM file: {str(e)}"))
+
+                                try:
+                                    if os.path.exists(new_json_path):
+                                        self._log_queue.put(('log', f"JSON already archived: {os.path.basename(json_file)}"))
+                                    else:
+                                        os.rename(json_file, new_json_path)
+                                        json_file = new_json_path  # update reference for any further use
+                                        self._log_queue.put(('log', f"Moved JSON to: {new_json_path}"))
+                                except Exception as e:
+                                    self._log_queue.put(('log', f"Warning: Could not move JSON file: {str(e)}"))
                     
                     # Step 3: Convert JSON to CSV
                     self._log_queue.put(('log', "\n--- Converting JSON to CSV ---"))
                     self._log_queue.put(('status', "Converting JSON to CSV..."))
                     self.progress_frame.grid()  # Show progress bars for conversion steps
+                    json_folder = os.path.join(output_dir, "json-files")
+                    csv_folder = os.path.join(output_dir, "csv-files")
+                    os.makedirs(csv_folder, exist_ok=True)
+
                     json_files = []
-                    for root_dir, dirs, files in os.walk(output_dir):
-                        if 'venv' in root_dir or '.venv' in root_dir or 'site-packages' in root_dir:
-                            continue
-                        for file in files:
-                            if file.endswith('.json'):
-                                json_path = os.path.join(root_dir, file)
-                                csv_path = os.path.splitext(json_path)[0] + '.csv'
-                                if os.path.exists(csv_path):
-                                    self._log_queue.put(('log', f"Skipping {file} - CSV already exists"))
-                                else:
-                                    json_files.append(json_path)
-                    
+                    scan_dirs = [json_folder] if os.path.exists(json_folder) else [output_dir]
+                    for scan_dir in scan_dirs:
+                        for root_dir, dirs, files in os.walk(scan_dir):
+                            if any(x in root_dir for x in ['venv', '.venv', 'site-packages', 'sbem-files']):
+                                continue
+                            for file in files:
+                                if file.endswith('.json'):
+                                    json_path = os.path.join(root_dir, file)
+                                    csv_path = os.path.join(csv_folder, os.path.splitext(file)[0] + '.csv')
+                                    if os.path.exists(csv_path):
+                                        self._log_queue.put(('log', f"Skipping {file} - CSV already exists"))
+                                    else:
+                                        json_files.append(json_path)
+
                     logging.getLogger(__name__).info(f"Step 3: Found {len(json_files)} JSON files to convert to CSV")
                     if not json_files:
                         self._log_queue.put(('log', "No JSON files found to convert"))
@@ -1444,7 +1474,7 @@ class DataloggerGUI:
                             logging.getLogger(__name__).info(f"Step 3: Converting {json_file} (size={os.path.getsize(json_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {json_file}"))
 
-                            csv_file = os.path.splitext(json_file)[0] + '.csv'
+                            csv_file = os.path.join(csv_folder, os.path.splitext(os.path.basename(json_file))[0] + '.csv')
                             try:
                                 await convert_json_to_csv(input_file=json_file, output_file=csv_file, progress_callback=self.update_csv_progress)
                                 logging.getLogger(__name__).info(f"Step 3: Created {csv_file}")
@@ -1462,8 +1492,10 @@ class DataloggerGUI:
 
                     csv_files = []
                     csv_files_total = 0
-                    for root_dir, dirs, files in os.walk(output_dir):
-                        if 'venv' in root_dir or 'site-packages' in root_dir:
+                    csv_folder = os.path.join(output_dir, "csv-files")
+                    scan_root = csv_folder if os.path.exists(csv_folder) else output_dir
+                    for root_dir, dirs, files in os.walk(scan_root):
+                        if any(x in root_dir for x in ['venv', 'site-packages']):
                             continue
                         for file in files:
                             file_lower = file.lower()
@@ -1490,7 +1522,7 @@ class DataloggerGUI:
                             logging.getLogger(__name__).info(f"Step 4: Converting {csv_file}")
                             logging.getLogger(__name__).info(f"Step 4: Converting {csv_file} (size={os.path.getsize(csv_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {csv_file}"))
-                            edf_file = os.path.splitext(csv_file)[0] + '.edf'
+                            edf_file = os.path.join(output_dir, os.path.splitext(os.path.basename(csv_file))[0] + '.edf')
                             try:
                                 async with aiofiles.open(csv_file, 'r') as f:
                                     header = await f.readline()
