@@ -1,3 +1,4 @@
+import asyncio
 import pandas as pd
 import numpy as np
 import pyedflib
@@ -6,7 +7,7 @@ from datetime import datetime
 import sys
 import os
 
-def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='mV', scale_factor=1):
+async def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='mV', scale_factor=1, recording_start=None):
     """
     Convert a CSV file with single ECG channel data to EDF+ format.
     
@@ -25,6 +26,9 @@ def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='m
     """
     if edf_filename is None:
         edf_filename = os.path.splitext(csv_filename)[0] + '.edf'
+
+    if recording_start is None:
+        recording_start = datetime.now()
 
     # Read the CSV file - only first two columns
     print(f"Reading CSV file: {csv_filename}")
@@ -145,14 +149,19 @@ def csv_to_edf_plus(csv_filename, edf_filename=None, sampling_freq=None, unit='m
         'equipment': 'CSV Converter',
         'admincode': '',
         'sex': '',
-        'startdate': datetime.now(),
+        'startdate': recording_start,
         'birthdate': ''
     }
 
     # Create EDF+ file
     print(f"\nCreating EDF+ file: {edf_filename}")
+    #print(f"Recording start time: {recording_start.strftime('%Y-%m-%d %H:%M:%S')}")
+    if recording_start:
+        print(f"Recording start time: {recording_start.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        print(f"Recording start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (current time, none provided)")
     print(f"Writing {len(ecg_data)} samples...")
-    
+        
     try:
         f = pyedflib.EdfWriter(edf_filename, n_channels=1, file_type=FILETYPE_EDFPLUS)
         f.setSignalHeaders([signal_header])
@@ -207,7 +216,8 @@ def main():
         print(f"Error: File '{csv_filename}' not found!")
         return
 
-    csv_to_edf_plus(csv_filename, edf_filename, sampling_freq, unit, scale_factor)
+    #csv_to_edf_plus(csv_filename, edf_filename, sampling_freq, unit, scale_factor)
+    asyncio.run(csv_to_edf_plus(csv_filename, edf_filename, sampling_freq, unit, scale_factor))
 
 if __name__ == "__main__":
     main()

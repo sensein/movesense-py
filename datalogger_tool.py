@@ -15,6 +15,18 @@ async def fetch_status(serial, args):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
+
+async def fetch_status_and_battery(serial, args):
+    """Fetch status from a specific device."""
+    try:
+        async with SensorCommand(serial) as sensor:
+            result = await sensor.get_status()
+
+            result.update(await sensor.get_battery_level())
+            return result
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
 async def configure_device(serial, args = None, paths = None):
     """Configure a specific device."""
     try:
@@ -40,63 +52,175 @@ async def start_logging(serial, args):
     try:
         async with SensorCommand(serial) as sensor:
             result = await sensor.start_logging()
+            status = await sensor.get_status()
+            logging.info(f"Sensor state after start: {status}")
             return result
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
 async def stop_logging(serial, args):
-    """Stop logging on a specific device."""
+    """Stop logging and boot sensor to start a new log."""
     try:
         async with SensorCommand(serial) as sensor:
-            result = await sensor.stop_logging()
-            return result
+            # First, stop the current logging session to flush data to file
+            logging.info(f"Stopping logging for device {serial}...")
+            stop_result = await sensor.stop_logging()
+            logging.info(f"Stop result: success={stop_result.get('success')}, status_code={stop_result.get('status_code')}")
+            if not stop_result.get('success'):
+                return stop_result
+            
+            # Then boot the sensor (system_mode=5) to start a new log
+            logging.info(f"Booting sensor {serial} with system_mode=5...")
+            boot_result = await sensor.set_system_mode(5)
+            logging.info(f"Boot result: success={boot_result.get('success')}, status_code={boot_result.get('status_code')}")
+
+            # Accept status 202 (Accepted) as success for boot command
+            boot_status = boot_result.get('status_code', 0)
+            if boot_status in [200, 202]:
+                boot_result['success'] = True
+                logging.info(f"Boot command accepted with status {boot_status}")
+
+            await sensor.disconnect()
+            logging.info(f"Waiting 4 seconds for sensor {serial} to complete boot...")
+            await asyncio.sleep(4)
+            logging.info(f"Boot complete for device {serial}")
+
+            return boot_result
+            
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
-async def fetch_data(serial, args, output_dir=None):
+async def fetch_data(serial, args, output_dir=None, progress_callback=None):
     """Fetch data from a specific device."""
     fetched_files = []
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
-            # Use output directory if provided
+            # Dictionary to store all discovered logs
+            discovered_logs = {}
             
-            log_id = 1 # start with log id 1, fetch all the logs on sensor
+            # Step 1: Get first batch of logs (max 4) from logbook
+            logs = await sensor.get_log_list()
+            
+            if logs.get('success'):
+                entries = logs.get('entries', [])
+                logging.info(f"Found {len(entries)} logs in logbook for device {serial}")
+                
+                # Store logs from logbook with known sizes
+                for entry in entries:
+                    discovered_logs[entry['id']] = {
+                        'size': entry.get('size', 0),
+                        'last_modified': entry.get('last_modified', 0),
+                        'has_known_size': True
+                    }
+            else:
+                logging.warning(f"Failed to get logbook entries: {logs.get('error')}")
+            
+            # Step 2: Try to discover additional logs by attempting to fetch them
+            # Start from the highest known log ID + 1, or from 1 if no logs found
+            if discovered_logs:
+                next_log_id = max(discovered_logs.keys()) + 1
+            else:
+                next_log_id = 1
+            
+            # Try to find more logs 
             while True:
+                logging.debug(f"Probing for log ID {next_log_id}")
+                
+                # Try to fetch this log
+                probe_result = await sensor.fetch_data(log_id=next_log_id, output_file=None, progress_callback=None)
+                
+                if probe_result.get('success'):
+                    # Log exists! Add to discovered logs
+                    discovered_logs[next_log_id] = {
+                        'size': probe_result.get('size', 0),
+                        'last_modified': 0,  # Unknown
+                        'has_known_size': False  # Discovered by probing
+                    }
+                    logging.info(f"Discovered additional log ID {next_log_id} (size: {probe_result.get('size', 0)} bytes)")
+                    next_log_id += 1
+                elif probe_result.get('status_code') == 404:
+                    # Log not found - no more logs exist
+                    logging.info(f"No log found at ID {next_log_id} (404), stopping probe")
+                    break
+                else:
+                    # No more logs found
+                    logging.debug(f"No log found at ID {next_log_id}, stopping probe")
+                    break
+            
+            # Now fetch all discovered logs
+            total_logs = len(discovered_logs)
+            logging.info(f"Total logs to fetch: {total_logs}")
+            
+            # Calculate total bytes across all files
+            file_sizes = [log_info['size'] for log_info in discovered_logs.values()]
+            total_bytes = sum(file_sizes)
+            bytes_downloaded_so_far = 0
+            
+            # Fetch each log
+            for idx, (log_id, log_info) in enumerate(sorted(discovered_logs.items()), 1):
                 start_time = datetime.now()
-                logging.info(f"Fetching log {log_id} from device {serial}")
+                logging.info(f"Fetching log {log_id} from device {serial} ({idx}/{total_logs})")
+                logging.info(f"=== FETCHING log_id={log_id}, size={log_info['size']} ===")
+                
                 output_file = None
                 if output_dir:
                     output_file = f"{output_dir}/Movesense_log_{log_id}_{serial}.sbem"
                 elif hasattr(args, 'output') and args.output:
                     output_file = f"{args.output}/Movesense_log_{log_id}_{serial}.sbem"
+                
+                total_size = log_info['size']
+                has_known_size = log_info['has_known_size']
+                
+                def progress_callback_inner(count):
+                    if progress_callback:
+                        # Only update progress bar if we know the size beforehand
+                        logging.debug(f"Progress callback: bytes={count}, log_id={log_id}, total_size={total_size}, idx={idx}, total_logs={total_logs}")
+                        progress_callback(count, log_id, total_size, idx, total_logs, 
+                                        file_sizes=file_sizes, 
+                                        bytes_downloaded_so_far=bytes_downloaded_so_far, 
+                                        total_bytes=total_bytes,
+                                        has_known_size=has_known_size)
+                
+                result = await sensor.fetch_data(
+                    log_id=log_id, 
+                    output_file=output_file, 
+                    progress_callback=progress_callback_inner
+                )
 
-                result = await sensor.fetch_data(log_id=log_id, output_file=output_file)
+                logging.info(f"=== RESULT for log_id={log_id}: success={result.get('success')} ===")
 
                 if not result.get('success', False):
-                    logging.info(f"No more logs to fetch (or error occurred)")
+                    logging.warning(f"Failed to fetch log {log_id}")
+                    logging.error(f"FAILED: {result}")
                     if 'status_code' in result and result['status_code'] != 404:
                         logging.error(f"Status {result['status_code']}: {result.get('error', 'Unknown error')}")
-                    else:
-                        result = {'success': True, 'message': f'Fetched {log_id - 1} logs'}
-                    break
                 else:
                     end_time = datetime.now()
                     duration = (end_time - start_time).total_seconds()
-                    logging.info(f"Fetched log {log_id}, size {result.get('size', 0)/1024} kB in {duration:.2f} seconds. speed: {result.get('size', 0)/1024/duration:.2f} kB/s")
+                    size_kb = result.get('size', 0) / 1024
+                    speed = size_kb / duration if duration > 0 else 0
+                    
+                    if has_known_size:
+                        logging.info(f"Fetched log {log_id}, size {size_kb:.2f} kB in {duration:.2f} seconds. speed: {speed:.2f} kB/s")
+                    else:
+                        logging.info(f"Fetched log {log_id} (discovered), size {size_kb:.2f} kB in {duration:.2f} seconds. speed: {speed:.2f} kB/s")
 
-                filename = result.get('filename')
-                if filename:
-                    fetched_files.append(filename)
-    
-                log_id += 1
+                    filename = result.get('filename')
+                    if filename:
+                        fetched_files.append(filename)
+
+                    bytes_downloaded_so_far += total_size
 
             # Reset sensor to avoid the 409 error on Sensor firmware <= 2.3.1
             logging.info(f"Resetting device {serial} to system mode <5>")
             await sensor.set_system_mode(5)
 
-            return {'success': True, 'files_fetched': fetched_files}
+            await sensor.disconnect()
+
+            return {'success': True, 'files_fetched': fetched_files, 'total_logs': total_logs}
 
     except Exception as e:
+        logging.error(f"Error fetching data: {e}", exc_info=True)
         return {'success': False, 'error': str(e)}
 
 async def erase_memory(serial):
@@ -104,6 +228,22 @@ async def erase_memory(serial):
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
             result = await sensor.erase_memory()
+            return result
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    
+async def get_battery_level(serial):
+    """Get battery level from a specific device."""
+    try:
+        async with SensorCommand(serial, set_time=False) as sensor:
+            result = await sensor.get_resource("/System/Energy/Level")
+            logging.info(f"Battery level result: {result}")
+            if result.get('success'):
+                data = result.get('data', b'')
+                if len(data) >= 1:
+                    from sensor_command import DataView
+                    level = DataView(data).get_uint_8(0)
+                    result['battery_level'] = level
             return result
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -202,13 +342,6 @@ def fetch_command(serial, args) -> bool:
     except Exception as e:
         print(f"Device {serial} fetch error: {e}")
         return False
-
-    files_fetched = fetch_result.get('files_fetched', [])
-    logging.info(f"Total files fetched from device {serial}: {len(files_fetched)}")
-    for f in files_fetched:
-        print(f"  Fetched file: {f}")
-        # TODO: Add conversion to json using sbem2json exe
-
 
 def erasemem_command(serial, args) -> bool:
     """Erase memory on devices synchronously using CLEAR_LOGBOOK command."""
