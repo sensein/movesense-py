@@ -2,6 +2,7 @@ import asyncio
 import sys
 import json
 import os
+import io
 import csv
 import logging
 from datetime import datetime
@@ -444,10 +445,9 @@ async def process_regular_stream(stream_name, entries, output_file, relative_tim
     log.debug(f"[process_regular_stream] writing CSV to {stream_output!r}")
     if progress_callback:
         progress_callback(0, len(filled_data), stream_name)
-    count = 0
-    async with aiofiles.open(stream_output, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
 
+    async with aiofiles.open(stream_output, "w", newline="") as csvfile:
+        # Determine header
         first_val = filled_data[0][1]
         log.debug(f"[process_regular_stream] first_val={first_val!r}, type={type(first_val).__name__}")
         if isinstance(first_val, list) and len(first_val) == 3:
@@ -456,17 +456,33 @@ async def process_regular_stream(stream_name, entries, output_file, relative_tim
         else:
             header = ["Timestamp_ms", "Value", "RelativeTime", relative_time, "UTC", utc_time_str]
             log.debug("[process_regular_stream] using scalar Value header")
-        await writer.writerow(header)
 
-        for ts, val in filled_data:
-            count += 1
-            if progress_callback and count % 100 == 0:
-                progress_callback(count, len(filled_data), stream_name)
+        # Write header first
+        buf = io.StringIO()
+        csv.writer(buf).writerow(header)
+        await csvfile.write(buf.getvalue())
 
+        # Write data in chunks of 1000 rows
+        chunk_size = 1000
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        for i, (ts, val) in enumerate(filled_data):
             if isinstance(val, list):
-                await writer.writerow([ts] + [f"{v:.6f}" for v in val])
+                writer.writerow([ts] + [f"{v:.6f}" for v in val])
             else:
-                await writer.writerow([ts, f"{val:.6f}"])
+                writer.writerow([ts, f"{val:.6f}"])
+
+            if (i + 1) % chunk_size == 0:
+                if progress_callback:
+                    progress_callback(i + 1, len(filled_data), stream_name)
+                await csvfile.write(buffer.getvalue())
+                buffer = io.StringIO()
+                writer = csv.writer(buffer)
+
+        # Remaining rows
+        remaining = buffer.getvalue()
+        if remaining:
+            await csvfile.write(remaining)
 
     #print(f"Saved {len(filled_data)} samples to {stream_output}\n")
     log.debug(f"Saved {len(filled_data)} samples to {stream_output}\n")

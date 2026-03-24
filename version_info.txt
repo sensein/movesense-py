@@ -16,7 +16,7 @@ VSVersionInfo(
         u'040904B0',
         [StringStruct(u'CompanyName', u'Movesense Ltd'),
         StringStruct(u'FileDescription', u'Movesense ECG Datalogger'),
-        StringStruct(u'FileVersion', u'1.0.0.11'),
+        StringStruct(u'FileVersion', u'1.0.0.12'),
         StringStruct(u'InternalName', u'Movesense_ECG_datalogger'),
         StringStruct(u'LegalCopyright', u'Copyright (C) 2025 Movesense Ltd'),
         StringStruct(u'OriginalFilename', u'Movesense_ECG_datalogger_gui.exe'),

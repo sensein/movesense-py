@@ -1284,12 +1284,12 @@ class DataloggerGUI:
                 if self.total_logs == 0 and total_log_count > 0:
                     self.total_logs = total_log_count
                     self.total_bytes = total_bytes
-                    logging.getLogger(__name__).debug(f"progress_callback init: total_logs={total_log_count}, total_bytes={total_bytes}")
+                    #logging.getLogger(__name__).debug(f"progress_callback init: total_logs={total_log_count}, total_bytes={total_bytes}")
 
                 # Update current file progress
                 if total_size > 0:
                     file_percent = min(100, (bytes_downloaded / total_size) * 100)
-                    logging.getLogger(__name__).debug(f"progress_callback: log_id={log_id}, {bytes_downloaded}/{total_size} bytes ({file_percent:.1f}%)")
+                    #logging.getLogger(__name__).debug(f"progress_callback: log_id={log_id}, {bytes_downloaded}/{total_size} bytes ({file_percent:.1f}%)")
                     self.root.after(0, self.update_file_progress, 
                         file_percent, bytes_downloaded, total_size, log_id)
                 
@@ -1359,7 +1359,7 @@ class DataloggerGUI:
                         self._log_queue.put(('log', "No SBEM files found to convert."))
                     else:
                         for sbem_file in sbem_files:
-                            logging.getLogger(__name__).info(f"Step 2: Converting {sbem_file}")
+                            #logging.getLogger(__name__).info(f"Step 2: Converting {sbem_file}")
                             logging.getLogger(__name__).info(f"Step 2: Converting {sbem_file} (size={os.path.getsize(sbem_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {sbem_file}"))
 
@@ -1389,7 +1389,7 @@ class DataloggerGUI:
                                     if "invalid map<K, T>" not in line and "SmlDescriptor::parseModifier:" not in line:
                                         self._log_queue.put(('log', line))
                             
-                            await asyncio.sleep(0.3)
+                            #await asyncio.sleep(0.3)
                             if conv_process.returncode != 0:
                                 logging.getLogger(__name__).warning(f"Step 2: SBEM conversion failed for {sbem_filename}, returncode={conv_process.returncode}")
                                 self._log_queue.put(('log', f"Warning: Conversion failed for {sbem_filename}\n"))
@@ -1437,7 +1437,7 @@ class DataloggerGUI:
                                         self._log_queue.put(('log', f"Moved JSON to: {new_json_path}"))
                                 except Exception as e:
                                     self._log_queue.put(('log', f"Warning: Could not move JSON file: {str(e)}"))
-                    
+
                     # Step 3: Convert JSON to CSV
                     self._log_queue.put(('log', "\n--- Converting JSON to CSV ---"))
                     self._log_queue.put(('status', "Converting JSON to CSV..."))
@@ -1470,7 +1470,7 @@ class DataloggerGUI:
                         self.reset_progress_bars()
                         for json_file in json_files:
                             self.root.after(0, self.update_overall_progress, counter*100/len(json_files), counter, len(json_files))
-                            logging.getLogger(__name__).info(f"Step 3: Converting {json_file}")
+                            #logging.getLogger(__name__).info(f"Step 3: Converting {json_file}")
                             logging.getLogger(__name__).info(f"Step 3: Converting {json_file} (size={os.path.getsize(json_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {json_file}"))
 
@@ -1519,19 +1519,56 @@ class DataloggerGUI:
                             self._log_queue.put(('log', "All CSV files already converted. No new EDF files to create."))
                     else:
                         for csv_file in csv_files:
-                            logging.getLogger(__name__).info(f"Step 4: Converting {csv_file}")
+                            #logging.getLogger(__name__).info(f"Step 4: Converting {csv_file}")
                             logging.getLogger(__name__).info(f"Step 4: Converting {csv_file} (size={os.path.getsize(csv_file)} bytes)")
                             self._log_queue.put(('log', f"Converting: {csv_file}"))
-                            edf_file = os.path.join(output_dir, os.path.splitext(os.path.basename(csv_file))[0] + '.edf')
                             try:
-                                async with aiofiles.open(csv_file, 'r') as f:
-                                    header = await f.readline()
-                                    header = header.strip()
+                                first_ts_ms = None
+                                last_ts_ms = None
+                                with open(csv_file, 'rb') as f:
+                                    header = f.readline().decode('utf-8', errors='replace').strip()
+                                    second_line = f.readline().decode('utf-8', errors='replace').strip()
+                                    try:
+                                        first_ts_ms = float(second_line.split(',')[0])
+                                    except (ValueError, IndexError):
+                                        pass
+                                    # Seek to last ~256 bytes to find the last non-empty line
+                                    f.seek(0, 2)  # end of file
+                                    file_size = f.tell()
+                                    seek_back = min(256, file_size)
+                                    f.seek(-seek_back, 2)
+                                    tail = f.read().decode('utf-8', errors='replace')
+                                last_line = next(
+                                    (l for l in reversed(tail.splitlines()) if l.strip()),
+                                    None
+                                    )
+                                if last_line:
+                                    try:
+                                        last_ts_ms = float(last_line.split(',')[0])
+                                    except (ValueError, IndexError):
+                                        pass
                                 parts = header.split(',')
                                 utc_str = parts[5]
                                 logging.getLogger(__name__).debug(f"Step 4: Parsed UTC string='{utc_str}' from header of {csv_file}")
                                 utc_time_dt = datetime.strptime(utc_str[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
                                 logging.getLogger(__name__).debug(f"Step 4: Parsed utc_time_dt={utc_time_dt}")
+
+                                duration_suffix = ""
+                                if first_ts_ms is not None and last_ts_ms is not None:
+                                    total_s = int(round((last_ts_ms - first_ts_ms) / 1000))
+                                    h, rem = divmod(total_s, 3600)
+                                    m, s = divmod(rem, 60)
+                                    if h > 0:
+                                        duration_suffix = f"_{h}h{m}min{s}s"
+                                    elif m > 0:
+                                        duration_suffix = f"_{m}min{s}s"
+                                    else:
+                                        duration_suffix = f"_{s}s"
+                                    logging.getLogger(__name__).debug(f"Step 4: Recording duration={duration_suffix}")
+ 
+                                base_name = os.path.splitext(os.path.basename(csv_file))[0] + duration_suffix
+                                edf_file = os.path.join(output_dir, base_name + '.edf')
+
                                 await csv_to_edf_plus(csv_filename=csv_file,
                                             edf_filename=edf_file,
                                             sampling_freq=None,
@@ -1648,7 +1685,7 @@ class DataloggerGUI:
     def update_csv_progress(self, processed, total, stream):
         """Update CSV progress bar"""
         percent = (processed / total) * 100 if total > 0 else 0
-        logging.getLogger().debug(f"update_csv_progress: {processed}/{total} ({percent:.1f}%)")
+        #logging.getLogger().debug(f"update_csv_progress: {processed}/{total} ({percent:.1f}%)")
         self.file_progress['value'] = percent
         self.file_label.config(
         text=f"CSV {stream}: {processed:,} / {total:,} rows ({percent:.1f}%)"
@@ -1656,7 +1693,7 @@ class DataloggerGUI:
 
     def update_overall_progress(self, percent, current, total):
         """Update overall progress bar"""
-        logging.getLogger().debug(f"update_overall_progress: {current}/{total} ({percent:.1f}%)")
+        #logging.getLogger().debug(f"update_overall_progress: {current}/{total} ({percent:.1f}%)")
         self.overall_progress['value'] = percent
         self.overall_label.config(
             text=f"Files: {current} / {total} ({percent:.1f}%)"

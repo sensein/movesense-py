@@ -174,7 +174,7 @@ async def fetch_data(serial, args, output_dir=None, progress_callback=None):
                 def progress_callback_inner(count):
                     if progress_callback:
                         # Only update progress bar if we know the size beforehand
-                        logging.debug(f"Progress callback: bytes={count}, log_id={log_id}, total_size={total_size}, idx={idx}, total_logs={total_logs}")
+                        #logging.debug(f"Progress callback: bytes={count}, log_id={log_id}, total_size={total_size}, idx={idx}, total_logs={total_logs}")
                         progress_callback(count, log_id, total_size, idx, total_logs, 
                                         file_sizes=file_sizes, 
                                         bytes_downloaded_so_far=bytes_downloaded_so_far, 
