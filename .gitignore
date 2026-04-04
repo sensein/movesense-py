@@ -28,13 +28,20 @@ dist/
 .vscode/launch.json
 
 .venv/
+.venv-*/
 venv/
 build/
 output*
 
+# Zarr stores
+*.zarr/
+
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+debug_*.log
+.env
 **/pytz/zoneinfo/
 **/tzdata/
 **/matplotlib/mpl-data/
