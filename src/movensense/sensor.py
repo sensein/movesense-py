@@ -98,6 +98,7 @@ class SensorCommand:
         self.device_name: Optional[str] = None
         self.is_connected = False
         self.response_queue = asyncio.Queue()
+        self.data_queue = asyncio.Queue()  # for data notifications separated from command responses
         self.disconnected_event = asyncio.Event()
         self.response_handlers: Dict[int, Callable] = {}
         
@@ -308,41 +309,49 @@ class SensorCommand:
                 # Data response: response_code(1), reference(1), data(N)
                 response_data['data_payload'] = data[2:] if len(data) > 2 else b''
             
-            # Queue the response for processing
-            #self.logger.debug(f"Queuing response: {response_data}")
-            await self.response_queue.put(response_data)
+            # Route: command responses → response_queue, data → data_queue
+            if response_code == GSP_RESP_COMMAND_RESPONSE:
+                await self.response_queue.put(response_data)
+            else:
+                await self.data_queue.put(response_data)
             
         except Exception as e:
 
             self.logger.error(f"Error handling notification:", exc_info=e)
     
     async def send_command(self, command_bytes: bytearray, timeout: float = 10.0) -> Dict[str, Any]:
-        """Send a command and wait for response."""
+        """Send a command and wait for command response.
+
+        Data notifications are routed to data_queue by the notification handler,
+        so response_queue only contains command responses.
+        """
         if not self.is_connected:
             raise RuntimeError("Not connected to device")
-        
+
         try:
-            # Clear any pending responses
+            # Clear any stale command responses
             while not self.response_queue.empty():
                 await self.response_queue.get()
-            
+
             # Send the command
             await self.client.write_gatt_char(
-                WRITE_CHARACTERISTIC_UUID, 
-                command_bytes, 
+                WRITE_CHARACTERISTIC_UUID,
+                command_bytes,
                 response=True
             )
-            
-            # Wait for response with timeout
+
+            # Wait for command response
             try:
                 response = await asyncio.wait_for(
-                    self.response_queue.get(), 
+                    self.response_queue.get(),
                     timeout=timeout
                 )
                 return response
             except asyncio.TimeoutError:
                 raise TimeoutError(f"Command timeout after {timeout}s")
-                
+
+        except TimeoutError:
+            raise
         except Exception as e:
             self.logger.error(f"Command failed: {e}")
             raise
@@ -626,9 +635,9 @@ class SensorCommand:
             with open(filename, 'wb') as f_log:
                 while True:
                     try:
-                        # Wait for data packets with timeout
+                        # Wait for data packets from data_queue (separated by send_command)
                         data_response = await asyncio.wait_for(
-                            self.response_queue.get(), 
+                            self.data_queue.get(),
                             timeout=30.0
                         )
                         
