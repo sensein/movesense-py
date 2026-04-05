@@ -133,8 +133,7 @@ class StreamManager:
                     if channel and resp_code in [2, 3]:  # GSP_RESP_DATA, GSP_RESP_DATA_PART2
                         payload = response.get("data_payload", b"")
                         if len(payload) > 0:
-                            # Parse raw bytes to float values
-                            values = self._parse_payload(payload)
+                            values = self._parse_payload(payload, channel=channel)
                             await self._broadcast({
                                 "type": "data",
                                 "channel": channel,
@@ -157,35 +156,55 @@ class StreamManager:
             self.state = StreamState.ERROR
             await self._broadcast({"type": "error", "message": f"Stream error: {e}"})
 
-    def _parse_payload(self, payload: bytes) -> list:
-        """Parse BLE subscription data payload using the existing DataView parser.
+    def _parse_payload(self, payload: bytes, channel: str = "") -> list:
+        """Parse BLE subscription data payload.
 
         Subscription data format (from Movesense GSP protocol):
         - Bytes 0-3: timestamp (uint32, little-endian)
-        - Bytes 4+: sensor data as array of float32 values
+        - Bytes 4+: sensor samples
 
-        Uses the same DataView class as the rest of the sensor protocol.
+        ECG: int16 samples (LSB * 0.000381469726563 = mV)
+        ACC/GYRO/IMU: int16 triplets (x,y,z) scaled by sensor range
+        Temp/HR: float32 or int16 depending on firmware
         """
-        import math
+        import struct
 
-        if len(payload) < 8:
+        if len(payload) < 6:
             return []
 
-        dv = DataView(payload)
+        # Skip 4-byte timestamp
+        data = payload[4:]
+        ch_lower = channel.lower()
 
-        # First 4 bytes are the timestamp — skip them
-        data_start = 4
+        # ECG: int16 samples → mV
+        if 'ecg' in ch_lower:
+            ECG_LSB_TO_MV = 0.000381469726563
+            values = []
+            for i in range(0, len(data) - 1, 2):
+                raw = struct.unpack_from('<h', data, i)[0]
+                values.append(round(raw * ECG_LSB_TO_MV, 6))
+            return values
+
+        # ACC/GYRO/Magn/IMU: int16 values (may need scaling but raw is fine for display)
+        if any(k in ch_lower for k in ['acc', 'gyro', 'magn', 'imu']):
+            values = []
+            for i in range(0, len(data) - 1, 2):
+                raw = struct.unpack_from('<h', data, i)[0]
+                values.append(raw)
+            return values
+
+        # Default: try float32, fallback to int16
+        import math
         values = []
-        offset = data_start
-        while offset + 4 <= len(payload):
-            try:
-                val = dv.get_float_32(offset)
+        if len(data) % 4 == 0:
+            for i in range(0, len(data), 4):
+                val = struct.unpack_from('<f', data, i)[0]
                 if math.isnan(val) or math.isinf(val):
                     val = 0.0
                 values.append(round(val, 6))
-                offset += 4
-            except Exception:
-                break
+        else:
+            for i in range(0, len(data) - 1, 2):
+                values.append(struct.unpack_from('<h', data, i)[0])
 
         return values
 
