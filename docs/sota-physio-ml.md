@@ -74,3 +74,32 @@ Key approaches from the literature:
 ### Tier 3 — Research stage (less mature)
 7. **PINNs for ECG**: Constrained by Einthoven/dipole models — very few papers
 8. **Physics-constrained artifact removal**: ACC→ECG adaptive filtering with learned components
+
+## 6. Physics-Informed Architectures (Implemented)
+
+| Model | arXiv | Key Innovation | Module |
+|-------|-------|---------------|--------|
+| PirateNet | 2402.00326 | Adaptive residual connections, progressive deepening | `learned/pinn.py` |
+| Physics-GRU | 2408.16599 | Constrained GRU with smoothness + conservation losses | `learned/pinn.py` |
+| Residual-Based Attention | 2509.20349 | Attention weighted by physics residual magnitude | `learned/pinn.py` |
+| Symbolic-KAN | 2603.23854 | Kolmogorov-Arnold Networks with B-spline edges, equation discovery | `learned/symbolic.py` |
+| WARP | 2506.01153 | Physics-informed linear RNN, 10x better on dynamical systems | Referenced |
+
+## 7. Causal Discovery (Implemented)
+
+| Method | Source | Module |
+|--------|--------|--------|
+| Granger Causality (VAR F-test) | Classical | `learned/causal.py` |
+| Cross-Channel Causality Discovery | Novel | `learned/causal.py` |
+| Transfer Entropy (information-theoretic) | Classical | `learned/causal.py` |
+| seq2graph (dynamic dependencies) | 1812.04448 | Referenced |
+| PCMCI+ (causal time series) | tigramite library | Referenced |
+
+## 8. Symbolic Regression & Equation Discovery
+
+| Paper | arXiv | Date | Key Innovation |
+|-------|-------|------|---------------|
+| Symbolic-KAN | 2603.23854 | Mar 2026 | KAN + symbolic structure for governing equations |
+| LLM-Based Scientific Equation Discovery | 2602.10576 | Feb 2026 | RL-tuned LLMs for symbolic regression |
+| Symbolic Foundation Regressor | 2505.21879 | May 2025 | Pre-trained model for networked dynamical systems |
+| Symplectic Neural Networks | 2408.09821 | Aug 2024 | Hamiltonian dynamics with symbolic regression |
