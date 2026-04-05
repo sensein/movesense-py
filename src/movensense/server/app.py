@@ -142,15 +142,33 @@ def create_app(data_dir: Path) -> FastAPI:
                 status.update(battery)
 
                 # Read current datalogger config (may timeout while logging)
+                # Device config: GET only returns count (not paths) per firmware behavior.
+                # Read last known config from our audit log instead.
+                config_count = 0
                 current_config = ""
                 try:
                     config_result = await sensor.get_resource("/Mem/DataLogger/Config")
                     if config_result.get("success"):
                         raw = config_result.get("data", b"")
-                        if raw:
-                            current_config = raw.decode("utf-8", errors="ignore").rstrip("\x00")
+                        if raw and len(raw) >= 1:
+                            config_count = raw[0]
                 except Exception:
-                    log.warning("Could not read device config (device may be logging)")
+                    pass
+
+                # Check audit log for last configured paths
+                serial_str = status.get("serial_number", serial)
+                audit_file = data_dir / serial_str / "audit.jsonl"
+                if config_count > 0 and audit_file.exists():
+                    try:
+                        lines = audit_file.read_text().strip().split("\n")
+                        for line in reversed(lines):
+                            entry = json.loads(line)
+                            if entry.get("action") == "config_change":
+                                paths = entry.get("new_paths", [])
+                                current_config = "\0".join(paths)
+                                break
+                    except Exception:
+                        pass
 
                 # Probe device capabilities from /Info endpoints
                 from ..protocol import parse_info_response, SENSOR_FORMATS
@@ -230,6 +248,7 @@ def create_app(data_dir: Path) -> FastAPI:
                     "datalogger_state": {1: "Unknown", 2: "Ready", 3: "Logging"}.get(status.get("dlstate", 1), "Unknown"),
                     "dlstate": status.get("dlstate", 1),
                     "current_config": current_config,
+                    "config_count": config_count,
                     "capabilities": capabilities,
                     "memory_full": is_full,
                     "total_log_size_bytes": total_log_size,
