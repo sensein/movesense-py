@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -204,6 +205,52 @@ def create_app(data_dir: Path) -> FastAPI:
                 if not result.get("success"):
                     raise HTTPException(500, detail=f"Start failed: {result.get('error')}")
                 return {"status": "logging_started"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
+    @app.post("/api/device/fetch")
+    async def device_fetch(request: dict, _: str = Depends(verify_token)):
+        """Fetch all logs from device → SBEM → JSON → Zarr + CSV. Stores both raw and converted."""
+        from ..cli import _fetch
+        serial = request.get("serial", "")
+        if not serial:
+            raise HTTPException(400, detail="serial required")
+
+        out_dir = data_dir / serial / datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            result = await _fetch(serial, out_dir, edf=False)
+            if result.get("success"):
+                scanner.scan()  # refresh index
+                return {
+                    "status": "fetched",
+                    "files": result.get("files", []),
+                    "output_dir": str(out_dir),
+                    "log_count": len(result.get("files", [])),
+                }
+            else:
+                raise HTTPException(500, detail=result.get("error", "Fetch failed"))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
+    @app.post("/api/device/erase")
+    async def device_erase(request: dict, _: str = Depends(verify_token)):
+        """Erase all logs from device memory."""
+        from ..sensor import SensorCommand
+        serial = request.get("serial", "")
+        if not serial:
+            raise HTTPException(400, detail="serial required")
+        try:
+            async with SensorCommand(serial, set_time=False) as sensor:
+                result = await sensor.erase_memory()
+                if not result.get("success"):
+                    raise HTTPException(500, detail=f"Erase failed: {result.get('error')}")
+                return {"status": "memory_erased"}
         except HTTPException:
             raise
         except Exception as e:

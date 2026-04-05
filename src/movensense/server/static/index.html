@@ -133,6 +133,14 @@
         <button onclick="stopLogging()" id="btn-stop-log" class="danger" disabled>Stop Logging</button>
       </div>
 
+      <!-- Data Management -->
+      <div style="font-size:0.85rem;font-weight:600;margin:0.75rem 0 0.5rem;">Data Management</div>
+      <div class="stream-controls">
+        <button onclick="fetchLogs()" id="btn-fetch" disabled>Download Logs</button>
+        <button onclick="eraseLogs()" id="btn-erase" class="danger" disabled>Erase Memory</button>
+        <span id="fetch-status" style="font-size:0.8rem;color:#666"></span>
+      </div>
+
       <hr style="border-color:var(--border);margin:0.75rem 0">
 
       <!-- Live Streaming -->
@@ -322,10 +330,19 @@
       // Streaming buttons
       document.getElementById('btn-start').disabled = false;
 
+      // Data management buttons — fetch/erase only when not logging
+      document.getElementById('btn-fetch').disabled = isLogging;
+      document.getElementById('btn-erase').disabled = isLogging;
+
       // Connection status
       const stateEl = document.getElementById('stream-state');
       stateEl.textContent = `Connected (${info.datalogger_state})`;
       stateEl.className = 'stream-status ' + (isLogging ? 'streaming' : 'idle');
+
+      // Memory full warning
+      if (info.memory_full) {
+        document.getElementById('fetch-status').innerHTML = '<span style="color:#ef4444">⚠ Memory full — download logs and erase to continue</span>';
+      }
     }
 
     async function connectDevice() {
@@ -406,6 +423,7 @@
     }
 
     async function stopLogging() {
+      if (!confirm('Stop active recording? Data already written to flash is preserved.')) return;
       try {
         const resp = await fetch('/api/device/stop', {
           method: 'POST',
@@ -425,6 +443,50 @@
       } catch (e) {
         document.getElementById('stream-error').style.display = '';
         document.getElementById('stream-error').textContent = e.message;
+      }
+    }
+
+    async function fetchLogs() {
+      if (!connectedSerial) return;
+      const statusEl = document.getElementById('fetch-status');
+      statusEl.textContent = 'Downloading logs...';
+      document.getElementById('btn-fetch').disabled = true;
+      try {
+        const resp = await fetch('/api/device/fetch', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: connectedSerial }),
+        });
+        if (!resp.ok) throw new Error((await resp.json()).detail || 'Fetch failed');
+        const result = await resp.json();
+        statusEl.innerHTML = `<span style="color:#22c55e">Downloaded ${result.log_count} log(s) → ${result.output_dir}</span>`;
+        document.getElementById('btn-fetch').disabled = false;
+      } catch (e) {
+        statusEl.innerHTML = `<span style="color:#ef4444">${e.message}</span>`;
+        document.getElementById('btn-fetch').disabled = false;
+      }
+    }
+
+    async function eraseLogs() {
+      if (!connectedSerial) return;
+      const confirmed = prompt('This will permanently erase ALL logged data from the device.\nType "erase" to confirm:');
+      if (confirmed !== 'erase') { alert('Erase cancelled'); return; }
+
+      const statusEl = document.getElementById('fetch-status');
+      statusEl.textContent = 'Erasing memory...';
+      document.getElementById('btn-erase').disabled = true;
+      try {
+        const resp = await fetch('/api/device/erase', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: connectedSerial }),
+        });
+        if (!resp.ok) throw new Error((await resp.json()).detail || 'Erase failed');
+        statusEl.innerHTML = '<span style="color:#22c55e">Memory erased successfully</span>';
+        document.getElementById('btn-erase').disabled = false;
+      } catch (e) {
+        statusEl.innerHTML = `<span style="color:#ef4444">${e.message}</span>`;
+        document.getElementById('btn-erase').disabled = false;
       }
     }
 
