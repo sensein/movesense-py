@@ -506,6 +506,23 @@
       }
       setConfigFromDevice(info.current_config || '');
 
+      // Show config status from device
+      const configNote = document.createElement('div');
+      configNote.style.cssText = 'font-size:0.75rem;color:#666;margin:0.25rem 0;';
+      if (info.config_count > 0 && info.current_config) {
+        const paths = info.current_config.split('\0').filter(p => p.startsWith('/'));
+        configNote.innerHTML = `Device has <b>${info.config_count}</b> channels configured` +
+          (paths.length > 0 ? `: ${paths.join(', ')}` : ' (paths from last known config)');
+      } else if (info.config_count > 0) {
+        configNote.innerHTML = `Device has <b>${info.config_count}</b> channels configured (paths unknown — apply config to update)`;
+      } else {
+        configNote.innerHTML = 'No active logging config on device — defaults selected';
+      }
+      const configPanel = document.getElementById('config-channels');
+      configPanel.parentNode.insertBefore(configNote, configPanel);
+
+      enforceIMUDependencies();
+
       // Config editor state
       const readonlyMsg = document.getElementById('config-readonly-msg');
       if (isLogging) {
