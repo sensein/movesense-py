@@ -174,7 +174,10 @@ def create_app(data_dir: Path) -> FastAPI:
             if "ecg" in sensor_type.lower() or "ecg" in ch_name.lower():
                 if chunk.ndim == 1 and len(chunk) > 10:
                     try:
-                        peaks = detect_r_peaks(chunk, rate)
+                        # Try simple_threshold first (more robust on real wearable ECG)
+                        peaks = detect_r_peaks(chunk, rate, method="simple_threshold")
+                        if len(peaks) < 2:
+                            peaks = detect_r_peaks(chunk, rate, method="pan_tompkins")
                         if len(peaks) >= 2:
                             rr = compute_rr_intervals(peaks, rate)
                             hrv = compute_hrv(rr)

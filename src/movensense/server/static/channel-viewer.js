@@ -323,22 +323,91 @@ class ChannelViewer {
 
   _renderStats(stats) {
     let html = '<div class="stats-grid">';
+    const duration = stats.end ? (stats.end - stats.start).toFixed(1) : '?';
 
     for (const [name, ch] of Object.entries(stats.channels)) {
       if (!this.visible.has(name)) continue;
+      const isECG = name.toLowerCase().includes('ecg');
+      const isACC = name.toLowerCase().includes('acc');
+      const isIMU = name.toLowerCase().includes('imu');
+      const isGyro = name.toLowerCase().includes('gyro');
+      const isTemp = name.toLowerCase().includes('temp');
+      const isHR = name.toLowerCase().includes('hr');
 
-      html += `<div class="stats-card"><strong>${name}</strong><br>`;
-      if (ch.hr_bpm) html += `HR: <b>${ch.hr_bpm}</b> bpm `;
-      if (ch.hrv_sdnn) html += `SDNN: ${ch.hrv_sdnn}ms `;
-      if (ch.hrv_rmssd) html += `RMSSD: ${ch.hrv_rmssd}ms `;
-      if (ch.sqi != null) html += `SQI: ${ch.sqi} (${ch.sqi_level}) `;
-      if (ch.r_peak_count) html += `R-peaks: ${ch.r_peak_count} `;
-      if (ch.activity_pct != null) html += `Active: ${ch.activity_pct}% `;
-      if (ch.magnitude_mean) html += `|Mag|: ${ch.magnitude_mean} `;
+      html += `<div class="stats-card"><strong>${name}</strong>`;
+      html += `<span style="float:right;font-size:0.7rem;color:#999">${duration}s | ${ch.sample_count} @ ${ch.sampling_rate_hz}Hz</span><br>`;
 
-      // Generic stats
-      if (ch.min != null) html += `<br><span style="font-size:0.75rem;color:#666">min=${ch.min} max=${ch.max} mean=${ch.mean} std=${ch.std}</span>`;
-      html += `<br><span style="font-size:0.7rem;color:#999">${ch.sample_count} samples @ ${ch.sampling_rate_hz}Hz</span>`;
+      // ECG bio-metrics
+      if (isECG) {
+        if (ch.hr_bpm) {
+          html += `<div style="margin:0.25rem 0">❤️ <b>${ch.hr_bpm}</b> bpm`;
+          if (ch.r_peak_count) html += ` (${ch.r_peak_count} beats)`;
+          html += `</div>`;
+        }
+        if (ch.hrv_sdnn || ch.hrv_rmssd) {
+          html += `<div style="font-size:0.8rem">HRV: `;
+          if (ch.hrv_sdnn) html += `SDNN=${ch.hrv_sdnn}ms `;
+          if (ch.hrv_rmssd) html += `RMSSD=${ch.hrv_rmssd}ms `;
+          if (ch.hrv_pnn50 != null) html += `pNN50=${ch.hrv_pnn50}%`;
+          html += `</div>`;
+        }
+        if (ch.sqi != null) {
+          const sqiColor = ch.sqi_level === 'high' ? '#22c55e' : ch.sqi_level === 'medium' ? '#f59e0b' : '#ef4444';
+          html += `<div style="font-size:0.8rem">Signal Quality: <span style="color:${sqiColor}"><b>${ch.sqi_level}</b></span> (${ch.sqi})</div>`;
+        }
+        if (!ch.hr_bpm && !ch.hrv_sdnn) {
+          html += `<div style="font-size:0.8rem;color:#999">Insufficient data for HR/HRV (need ≥2 beats)</div>`;
+        }
+        if (ch.min != null) {
+          html += `<div style="font-size:0.75rem;color:#666">Range: ${ch.min} — ${ch.max} mV | Mean: ${ch.mean} | σ: ${ch.std}</div>`;
+        }
+      }
+
+      // Accelerometer / IMU bio-metrics
+      else if (isACC || isIMU) {
+        if (ch.activity_pct != null) {
+          const actColor = ch.activity_pct > 50 ? '#22c55e' : '#3b82f6';
+          html += `<div style="margin:0.25rem 0">🏃 Activity: <b style="color:${actColor}">${ch.activity_pct}%</b> active, ${(100 - ch.activity_pct).toFixed(0)}% rest</div>`;
+        }
+        if (ch.magnitude_mean) {
+          html += `<div style="font-size:0.8rem">Magnitude: ${ch.magnitude_mean} (mean)</div>`;
+        }
+        // Show axis summaries with proper labels
+        const axisLabels = isIMU
+          ? {x:'Acc-X', y:'Acc-Y', z:'Acc-Z', a:'Gyro-X', b:'Gyro-Y', c:'Gyro-Z', d:'Mag-X', e:'Mag-Y', f:'Mag-Z'}
+          : {x:'X', y:'Y', z:'Z'};
+        const axes = Object.keys(axisLabels).filter(a => ch[`${a}_mean`] != null);
+        if (axes.length > 0) {
+          html += '<div style="font-size:0.75rem;color:#666">';
+          for (const a of axes) {
+            html += `${axisLabels[a]}: μ=${ch[`${a}_mean`]} σ=${ch[`${a}_std`]} `;
+          }
+          html += '</div>';
+        }
+      }
+
+      // Temperature
+      else if (isTemp) {
+        if (ch.min != null) {
+          html += `<div style="margin:0.25rem 0">🌡️ <b>${ch.mean}</b> (${ch.min} — ${ch.max})</div>`;
+        }
+      }
+
+      // Heart Rate
+      else if (isHR) {
+        if (ch.mean != null) {
+          html += `<div style="margin:0.25rem 0">❤️ <b>${ch.mean}</b> bpm (${ch.min} — ${ch.max})</div>`;
+        }
+      }
+
+      // Generic fallback
+      else {
+        if (ch.min != null) {
+          html += `<div style="font-size:0.8rem">Range: ${ch.min} — ${ch.max} | Mean: ${ch.mean} | σ: ${ch.std}</div>`;
+        }
+        if (ch.magnitude_mean) html += `<div style="font-size:0.8rem">Magnitude: ${ch.magnitude_mean}</div>`;
+      }
+
       html += '</div>';
     }
 
