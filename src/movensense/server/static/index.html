@@ -96,41 +96,61 @@
 
   <!-- Live Stream Tab -->
   <div id="tab-stream" style="display:none">
+    <!-- Connection -->
     <div class="stream-controls">
       <input id="stream-serial" type="text" placeholder="Device serial" style="width:200px">
       <button onclick="connectDevice()" id="btn-connect">Connect</button>
-      <span class="stream-status idle" id="stream-state">Idle</span>
-    </div>
-    <div id="device-info" style="display:none; margin-bottom:1rem;"></div>
-
-    <!-- Device Configuration Panel -->
-    <div id="config-panel" style="margin-bottom:1rem;">
-      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Measurement Configuration</div>
-      <div id="config-channels" class="config-grid"></div>
-      <div class="stream-controls" style="margin-top:0.5rem;">
-        <button onclick="applyConfig()" id="btn-config">Apply Config &amp; Start Logging</button>
-        <button onclick="stopLogging()" id="btn-stop-log" class="danger" disabled>Stop Logging</button>
-      </div>
-    </div>
-
-    <hr style="border-color:var(--border);margin:0.75rem 0">
-
-    <!-- Live Streaming Controls -->
-    <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Live Data Stream</div>
-    <div class="stream-controls">
-      <button class="primary" onclick="startStreaming()" id="btn-start" disabled>Start Streaming</button>
-      <button class="danger" onclick="stopStreaming()" id="btn-stop" disabled>Stop</button>
-      <label>Window:
-        <select id="time-window" onchange="setTimeWindow()">
-          <option value="5">5s</option>
-          <option value="10" selected>10s</option>
-          <option value="30">30s</option>
-          <option value="60">60s</option>
-        </select>
-      </label>
+      <span class="stream-status idle" id="stream-state">Not connected</span>
     </div>
     <div id="stream-error" class="error" style="display:none"></div>
-    <div id="charts"></div>
+
+    <!-- Everything below is hidden until connected -->
+    <div id="device-connected-panel" style="display:none">
+      <div id="device-info" style="margin:0.75rem 0;"></div>
+
+      <!-- Current Config (read from device) -->
+      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Device Configuration</div>
+      <div id="current-config-display" style="font-size:0.8rem;color:#666;margin-bottom:0.5rem;"></div>
+
+      <!-- Config Editor -->
+      <div id="config-panel">
+        <div id="config-channels" class="config-grid"></div>
+        <div id="config-readonly-msg" style="display:none;font-size:0.8rem;color:#f59e0b;margin:0.5rem 0;">
+          ⚠ Device is logging. Stop logging to change configuration.
+        </div>
+        <div class="stream-controls" style="margin-top:0.5rem;">
+          <input id="config-confirm" type="text" placeholder='Type "confirm" to apply changes' style="width:250px" disabled>
+          <button onclick="applyConfig()" id="btn-config" disabled>Apply Config</button>
+        </div>
+      </div>
+
+      <hr style="border-color:var(--border);margin:0.75rem 0">
+
+      <!-- Logging Control -->
+      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Logging Control</div>
+      <div class="stream-controls">
+        <button onclick="startLogging()" id="btn-start-log" disabled>Start Logging</button>
+        <button onclick="stopLogging()" id="btn-stop-log" class="danger" disabled>Stop Logging</button>
+      </div>
+
+      <hr style="border-color:var(--border);margin:0.75rem 0">
+
+      <!-- Live Streaming -->
+      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Live Data Stream</div>
+      <div class="stream-controls">
+        <button class="primary" onclick="startStreaming()" id="btn-start" disabled>Start Streaming</button>
+        <button class="danger" onclick="stopStreaming()" id="btn-stop" disabled>Stop Streaming</button>
+        <label>Window:
+          <select id="time-window" onchange="setTimeWindow()">
+            <option value="5">5s</option>
+            <option value="10" selected>10s</option>
+            <option value="30">30s</option>
+            <option value="60">60s</option>
+          </select>
+        </label>
+      </div>
+      <div id="charts"></div>
+    </div>
   </div>
 
   <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
@@ -200,35 +220,43 @@
       } catch (e) {}
     }
 
-    // Streaming UI logic
+    // === Live Stream Tab Logic ===
     let streamClient = null;
     let chartManager = null;
+    let connectedSerial = null;
+    let deviceState = null; // 1=Unknown, 2=Ready, 3=Logging
 
-    // Measurement types with valid sampling rates (from Movesense API docs)
     const MEASUREMENTS = [
-      { id: 'ecg', label: 'ECG', pathTemplate: '/Meas/Ecg/{rate}/mV', rates: [125, 128, 200, 250, 256, 500, 512], defaultRate: 200, unit: 'mV' },
+      { id: 'ecg', label: 'ECG', pathTemplate: '/Meas/Ecg/{rate}/mV', rates: [125, 128, 200, 250, 256, 500, 512], defaultRate: 200 },
       { id: 'acc', label: 'Accelerometer', pathTemplate: '/Meas/Acc/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
       { id: 'gyro', label: 'Gyroscope', pathTemplate: '/Meas/Gyro/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
       { id: 'magn', label: 'Magnetometer', pathTemplate: '/Meas/Magn/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 13 },
       { id: 'imu6', label: 'IMU 6-axis', pathTemplate: '/Meas/IMU6/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
-      { id: 'imu6m', label: 'IMU 6-axis (Mag)', pathTemplate: '/Meas/IMU6m/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
       { id: 'imu9', label: 'IMU 9-axis', pathTemplate: '/Meas/IMU9/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
       { id: 'temp', label: 'Temperature', pathTemplate: '/Meas/Temp', rates: [], defaultRate: null },
       { id: 'hr', label: 'Heart Rate', pathTemplate: '/Meas/HR', rates: [], defaultRate: null },
     ];
 
     // Build config panel
-    const configEl = document.getElementById('config-channels');
-    MEASUREMENTS.forEach(m => {
-      const checked = ['ecg', 'acc'].includes(m.id) ? 'checked' : '';
-      let rateHtml = '';
-      if (m.rates.length > 0) {
-        rateHtml = `<select id="rate-${m.id}">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`;
-      }
-      configEl.innerHTML += `<div class="config-item">
-        <label><input type="checkbox" id="cfg-${m.id}" ${checked}> ${m.label}</label>
-        ${rateHtml}
-      </div>`;
+    function buildConfigPanel() {
+      const el = document.getElementById('config-channels');
+      el.innerHTML = '';
+      MEASUREMENTS.forEach(m => {
+        let rateHtml = '';
+        if (m.rates.length > 0) {
+          rateHtml = `<select id="rate-${m.id}">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`;
+        }
+        el.innerHTML += `<div class="config-item">
+          <label><input type="checkbox" id="cfg-${m.id}"> ${m.label}</label>
+          ${rateHtml}
+        </div>`;
+      });
+    }
+    buildConfigPanel();
+
+    // Enable config confirm button only when "confirm" is typed
+    document.getElementById('config-confirm').addEventListener('input', (e) => {
+      document.getElementById('btn-config').disabled = e.target.value.trim().toLowerCase() !== 'confirm';
     });
 
     function getSelectedConfig() {
@@ -247,38 +275,127 @@
       return paths;
     }
 
-    function getSelectedChannels() {
-      return getSelectedConfig().map(path => ({ path, rate: 0 }));
+    function updateDeviceUI(info) {
+      deviceState = info.dlstate;
+      const isLogging = deviceState === 3;
+
+      // Show connected panel
+      document.getElementById('device-connected-panel').style.display = '';
+
+      // Device info
+      document.getElementById('device-info').innerHTML = `
+        <div class="card"><h3>${info.serial}</h3>
+        <div class="meta">${info.product_name} v${info.app_version} | Battery: ${info.battery}% | State: ${info.datalogger_state}</div></div>`;
+
+      // Current config
+      const configDisplay = document.getElementById('current-config-display');
+      if (info.current_config) {
+        const paths = info.current_config.split('\0').filter(p => p);
+        configDisplay.innerHTML = `<strong>Current config:</strong> ${paths.join(', ')}`;
+      } else {
+        configDisplay.innerHTML = '<em>No configuration set</em>';
+      }
+
+      // Config editor state
+      const readonlyMsg = document.getElementById('config-readonly-msg');
+      const confirmInput = document.getElementById('config-confirm');
+      if (isLogging) {
+        readonlyMsg.style.display = '';
+        confirmInput.disabled = true;
+        document.getElementById('btn-config').disabled = true;
+        // Disable all checkboxes and selects
+        document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = true);
+      } else {
+        readonlyMsg.style.display = 'none';
+        confirmInput.disabled = false;
+        confirmInput.value = '';
+        document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = false);
+      }
+
+      // Logging buttons
+      document.getElementById('btn-start-log').disabled = isLogging;
+      document.getElementById('btn-stop-log').disabled = !isLogging;
+
+      // Streaming buttons
+      document.getElementById('btn-start').disabled = false;
+
+      // Connection status
+      const stateEl = document.getElementById('stream-state');
+      stateEl.textContent = `Connected (${info.datalogger_state})`;
+      stateEl.className = 'stream-status ' + (isLogging ? 'streaming' : 'idle');
     }
 
-    async function applyConfig() {
+    async function connectDevice() {
       const serial = document.getElementById('stream-serial').value.trim();
-      if (!serial) { alert('Enter a device serial first'); return; }
-      const paths = getSelectedConfig();
-      if (!paths.length) { alert('Select at least one measurement'); return; }
+      if (!serial) { alert('Enter a device serial'); return; }
 
       document.getElementById('stream-error').style.display = 'none';
-      try {
-        // Configure
-        const configResp = await fetch('/api/device/config', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial, paths }),
-        });
-        if (!configResp.ok) throw new Error((await configResp.json()).detail || 'Config failed');
+      document.getElementById('stream-state').textContent = 'Connecting...';
 
-        // Start logging
-        const startResp = await fetch('/api/device/start', {
+      try {
+        const resp = await fetch('/api/device/connect', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
           body: JSON.stringify({ serial }),
         });
-        if (!startResp.ok) throw new Error((await startResp.json()).detail || 'Start failed');
+        if (!resp.ok) throw new Error((await resp.json()).detail || 'Connect failed');
+        const info = await resp.json();
+        connectedSerial = serial;
+        updateDeviceUI(info);
 
+        // Setup WebSocket for streaming
+        chartManager = new ChartManager('charts');
+        streamClient = new StreamClient(
+          (msg) => chartManager.addData(msg.channel, msg.values),
+          (msg) => { if (msg.type === 'status' && msg.state === 'streaming') { document.getElementById('btn-stop').disabled = false; } },
+          (err) => { document.getElementById('stream-error').style.display = ''; document.getElementById('stream-error').textContent = err; }
+        );
+        streamClient.connect();
+      } catch (e) {
+        document.getElementById('stream-error').style.display = '';
+        document.getElementById('stream-error').textContent = e.message;
+        document.getElementById('stream-state').textContent = 'Connection failed';
+        document.getElementById('stream-state').className = 'stream-status error';
+      }
+    }
+
+    async function applyConfig() {
+      const paths = getSelectedConfig();
+      if (!paths.length) { alert('Select at least one measurement'); return; }
+      try {
+        const resp = await fetch('/api/device/config', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: connectedSerial, paths }),
+        });
+        if (!resp.ok) throw new Error((await resp.json()).detail || 'Config failed');
+        document.getElementById('config-confirm').value = '';
+        document.getElementById('btn-config').disabled = true;
+        document.getElementById('current-config-display').innerHTML = `<strong>Current config:</strong> ${paths.join(', ')}`;
+        alert('Configuration applied successfully');
+      } catch (e) {
+        document.getElementById('stream-error').style.display = '';
+        document.getElementById('stream-error').textContent = e.message;
+      }
+    }
+
+    async function startLogging() {
+      try {
+        const resp = await fetch('/api/device/start', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serial: connectedSerial }),
+        });
+        if (!resp.ok) throw new Error((await resp.json()).detail || 'Start failed');
+        deviceState = 3;
+        document.getElementById('btn-start-log').disabled = true;
         document.getElementById('btn-stop-log').disabled = false;
-        document.getElementById('btn-start').disabled = false;
-        updateState('idle');
-        alert('Device configured and logging started!');
+        document.getElementById('stream-state').textContent = 'Connected (Logging)';
+        document.getElementById('stream-state').className = 'stream-status streaming';
+        // Lock config
+        document.getElementById('config-readonly-msg').style.display = '';
+        document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = true);
+        document.getElementById('config-confirm').disabled = true;
       } catch (e) {
         document.getElementById('stream-error').style.display = '';
         document.getElementById('stream-error').textContent = e.message;
@@ -286,67 +403,40 @@
     }
 
     async function stopLogging() {
-      const serial = document.getElementById('stream-serial').value.trim();
-      if (!serial) return;
       try {
-        await fetch('/api/device/stop', {
+        const resp = await fetch('/api/device/stop', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial }),
+          body: JSON.stringify({ serial: connectedSerial }),
         });
+        if (!resp.ok) throw new Error((await resp.json()).detail || 'Stop failed');
+        deviceState = 2;
+        document.getElementById('btn-start-log').disabled = false;
         document.getElementById('btn-stop-log').disabled = true;
-        alert('Logging stopped');
+        document.getElementById('stream-state').textContent = 'Connected (Ready)';
+        document.getElementById('stream-state').className = 'stream-status idle';
+        // Unlock config
+        document.getElementById('config-readonly-msg').style.display = 'none';
+        document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = false);
+        document.getElementById('config-confirm').disabled = false;
       } catch (e) {
-        alert('Stop failed: ' + e.message);
+        document.getElementById('stream-error').style.display = '';
+        document.getElementById('stream-error').textContent = e.message;
       }
     }
 
-    function updateState(state) {
-      const el = document.getElementById('stream-state');
-      el.textContent = state.charAt(0).toUpperCase() + state.slice(1);
-      el.className = `stream-status ${state}`;
-      document.getElementById('btn-start').disabled = state === 'streaming' || state === 'connecting';
-      document.getElementById('btn-stop').disabled = state !== 'streaming';
-    }
-
-    function connectDevice() {
-      const serial = document.getElementById('stream-serial').value.trim();
-      if (!serial) { alert('Enter a device serial'); return; }
-      if (streamClient) streamClient.disconnect();
-
-      chartManager = new ChartManager('charts');
-      streamClient = new StreamClient(
-        (msg) => chartManager.addData(msg.channel, msg.values),
-        (msg) => {
-          if (msg.type === 'status') updateState(msg.state);
-          if (msg.type === 'device_info') {
-            document.getElementById('device-info').style.display = '';
-            document.getElementById('device-info').innerHTML = `
-              <div class="card"><h3>${msg.serial}</h3>
-              <div class="meta">${msg.product_name} v${msg.app_version} | Battery: ${msg.battery}% | Logger: ${msg.datalogger_state}</div></div>`;
-            document.getElementById('btn-start').disabled = false;
-          }
-        },
-        (err) => {
-          document.getElementById('stream-error').style.display = '';
-          document.getElementById('stream-error').textContent = err;
-          updateState('error');
-        }
-      );
-      streamClient.connect();
-    }
-
     function startStreaming() {
-      const serial = document.getElementById('stream-serial').value.trim();
-      const channels = getSelectedChannels();
-      if (!channels.length) { alert('Select at least one channel'); return; }
+      const channels = getSelectedConfig();
+      if (!channels.length) { alert('Select at least one channel in config'); return; }
       chartManager.clear();
       document.getElementById('stream-error').style.display = 'none';
-      streamClient.startStream(serial, channels.map(c => c.path));
+      streamClient.startStream(connectedSerial, channels);
+      document.getElementById('btn-stop').disabled = false;
     }
 
     function stopStreaming() {
       if (streamClient) streamClient.stopStream();
+      document.getElementById('btn-stop').disabled = true;
     }
 
     function setTimeWindow() {

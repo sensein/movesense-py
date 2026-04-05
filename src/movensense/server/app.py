@@ -109,9 +109,42 @@ def create_app(data_dir: Path) -> FastAPI:
 
     # --- Device Control (Live Stream tab) ---
 
+    @app.post("/api/device/connect")
+    async def device_connect(request: dict, _: str = Depends(verify_token)):
+        """Connect to device, return status + current config."""
+        from ..sensor import SensorCommand
+        serial = request.get("serial", "")
+        if not serial:
+            raise HTTPException(400, detail="serial required")
+        try:
+            async with SensorCommand(serial) as sensor:
+                status = await sensor.get_status()
+                battery = await sensor.get_battery_level()
+                status.update(battery)
+
+                # Read current datalogger config
+                config_result = await sensor.get_resource("/Mem/DataLogger/Config")
+                current_config = ""
+                if config_result.get("success"):
+                    raw = config_result.get("data", b"")
+                    if raw:
+                        current_config = raw.decode("utf-8", errors="ignore").rstrip("\x00")
+
+                return {
+                    "serial": status.get("serial_number", serial),
+                    "product_name": status.get("product_name", "Unknown"),
+                    "app_version": status.get("app_version", "Unknown"),
+                    "battery": status.get("battery_level"),
+                    "datalogger_state": {1: "Unknown", 2: "Ready", 3: "Logging"}.get(status.get("dlstate", 1), "Unknown"),
+                    "dlstate": status.get("dlstate", 1),
+                    "current_config": current_config,
+                }
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
     @app.post("/api/device/config")
     async def device_config(request: dict, _: str = Depends(verify_token)):
-        """Configure device measurement paths and start logging."""
+        """Configure device measurement paths. Device must be in Ready state."""
         from ..sensor import SensorCommand
         serial = request.get("serial", "")
         paths = request.get("paths", [])
@@ -156,9 +189,8 @@ def create_app(data_dir: Path) -> FastAPI:
 
     @app.post("/api/device/stop")
     async def device_stop(request: dict, _: str = Depends(verify_token)):
-        """Stop logging on device."""
+        """Stop logging on device. No reboot — device goes to Ready state."""
         from ..sensor import SensorCommand
-        import asyncio
         serial = request.get("serial", "")
         if not serial:
             raise HTTPException(400, detail="serial required")
@@ -167,9 +199,6 @@ def create_app(data_dir: Path) -> FastAPI:
                 result = await sensor.stop_logging()
                 if not result.get("success"):
                     raise HTTPException(500, detail=f"Stop failed: {result.get('error')}")
-                boot = await sensor.set_system_mode(5)
-                await sensor.disconnect()
-                await asyncio.sleep(4)
                 return {"status": "logging_stopped"}
         except HTTPException:
             raise
