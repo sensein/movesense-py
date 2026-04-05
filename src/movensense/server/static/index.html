@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Movensense Data Browser</title>
+  <style>
+    :root { --bg: #fafafa; --fg: #111; --accent: #2563eb; --border: #e5e7eb; --card: #fff; --muted: #6b7280; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f0f0f; --fg: #e5e5e5; --accent: #60a5fa; --border: #2a2a2a; --card: #1a1a1a; --muted: #9ca3af; }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; padding: 2rem; max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.2rem; color: var(--muted); margin-bottom: 1.5rem; font-weight: 400; }
+    .breadcrumb { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; font-size: 0.875rem; color: var(--muted); }
+    .breadcrumb a { color: var(--accent); text-decoration: none; cursor: pointer; }
+    .breadcrumb a:hover { text-decoration: underline; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem 1.25rem; margin-bottom: 0.75rem; cursor: pointer; transition: border-color 0.15s; }
+    .card:hover { border-color: var(--accent); }
+    .card h3 { font-size: 1rem; margin-bottom: 0.25rem; }
+    .card .meta { font-size: 0.8rem; color: var(--muted); }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; background: var(--border); margin-right: 0.25rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
+    th { color: var(--muted); font-weight: 500; }
+    .empty { text-align: center; padding: 3rem; color: var(--muted); }
+    #loading { text-align: center; padding: 2rem; color: var(--muted); }
+    .error { color: #ef4444; padding: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Movensense Data Browser</h1>
+  <h2 id="subtitle">Loading...</h2>
+  <nav class="breadcrumb" id="breadcrumb"></nav>
+  <main id="content"><div id="loading">Loading...</div></main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
