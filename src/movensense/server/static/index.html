@@ -57,6 +57,8 @@
     .config-item { background: #f8f9fa; border: 1px solid var(--border); border-radius: 0.375rem; padding: 0.5rem 0.75rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.5rem; }
     .config-item label { flex: 1; display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
     .config-item select { font-size: 0.8rem; padding: 0.2rem; }
+    .config-item.changed { border-color: #f59e0b; background: #fffbeb; }
+    .config-diff-add { color: #22c55e; } .config-diff-remove { color: #ef4444; }
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 1rem; }
     .cal-header { text-align: center; font-size: 0.75rem; color: var(--muted); padding: 0.25rem; font-weight: 500; }
     .cal-cell { text-align: center; padding: 0.5rem 0.25rem; border-radius: 0.375rem; border: 1px solid var(--border); font-size: 0.85rem; min-height: 2.5rem; }
@@ -108,19 +110,26 @@
     <div id="device-connected-panel" style="display:none">
       <div id="device-info" style="margin:0.75rem 0;"></div>
 
-      <!-- Current Config (read from device) -->
+      <!-- Device Configuration -->
       <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Device Configuration</div>
-      <div id="current-config-display" style="font-size:0.8rem;color:#666;margin-bottom:0.5rem;"></div>
-
-      <!-- Config Editor -->
+      <div id="config-readonly-msg" style="display:none;font-size:0.8rem;color:#f59e0b;margin:0.5rem 0;">
+        ⚠ Device is logging. Stop logging to change configuration.
+      </div>
       <div id="config-panel">
         <div id="config-channels" class="config-grid"></div>
-        <div id="config-readonly-msg" style="display:none;font-size:0.8rem;color:#f59e0b;margin:0.5rem 0;">
-          ⚠ Device is logging. Stop logging to change configuration.
-        </div>
         <div class="stream-controls" style="margin-top:0.5rem;">
-          <input id="config-confirm" type="text" placeholder='Type "confirm" to apply changes' style="width:250px" disabled>
-          <button onclick="applyConfig()" id="btn-config" disabled>Apply Config</button>
+          <button onclick="showConfigDiff()" id="btn-apply" disabled style="background:#ccc;color:#666;cursor:not-allowed;">Apply Changes</button>
+        </div>
+      </div>
+
+      <!-- Config Change Confirmation Box (hidden until Apply is clicked) -->
+      <div id="config-diff-box" style="display:none;margin:0.75rem 0;padding:0.75rem;border:2px solid #f59e0b;border-radius:0.5rem;background:#fffbeb;">
+        <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Pending Configuration Changes</div>
+        <div id="config-diff-content" style="font-size:0.8rem;margin-bottom:0.5rem;"></div>
+        <div class="stream-controls">
+          <input id="config-confirm" type="text" placeholder='Type "confirm" to apply' style="width:200px">
+          <button onclick="applyConfig()" id="btn-config" disabled>Confirm &amp; Apply</button>
+          <button onclick="cancelConfigDiff()">Cancel</button>
         </div>
       </div>
 
@@ -232,7 +241,8 @@
     let streamClient = null;
     let chartManager = null;
     let connectedSerial = null;
-    let deviceState = null; // 1=Unknown, 2=Ready, 3=Logging
+    let deviceState = null;
+    let originalConfig = []; // config paths as read from device
 
     const MEASUREMENTS = [
       { id: 'ecg', label: 'ECG', pathTemplate: '/Meas/Ecg/{rate}/mV', rates: [125, 128, 200, 250, 256, 500, 512], defaultRate: 200 },
@@ -245,27 +255,63 @@
       { id: 'hr', label: 'Heart Rate', pathTemplate: '/Meas/HR', rates: [], defaultRate: null },
     ];
 
-    // Build config panel
     function buildConfigPanel() {
       const el = document.getElementById('config-channels');
       el.innerHTML = '';
       MEASUREMENTS.forEach(m => {
         let rateHtml = '';
         if (m.rates.length > 0) {
-          rateHtml = `<select id="rate-${m.id}">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`;
+          rateHtml = `<select id="rate-${m.id}" onchange="onConfigChange()">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`;
         }
-        el.innerHTML += `<div class="config-item">
-          <label><input type="checkbox" id="cfg-${m.id}"> ${m.label}</label>
+        el.innerHTML += `<div class="config-item" id="cfg-item-${m.id}">
+          <label><input type="checkbox" id="cfg-${m.id}" onchange="onConfigChange()"> ${m.label}</label>
           ${rateHtml}
         </div>`;
       });
     }
     buildConfigPanel();
 
-    // Enable config confirm button only when "confirm" is typed
     document.getElementById('config-confirm').addEventListener('input', (e) => {
       document.getElementById('btn-config').disabled = e.target.value.trim().toLowerCase() !== 'confirm';
     });
+
+    // Set checkboxes/rates from device config string
+    function setConfigFromDevice(configStr) {
+      const paths = configStr ? configStr.split('\0').filter(p => p && p !== '/Time/Detailed') : [];
+      originalConfig = [...paths];
+
+      // Uncheck all first
+      MEASUREMENTS.forEach(m => {
+        const chk = document.getElementById(`cfg-${m.id}`);
+        if (chk) chk.checked = false;
+      });
+
+      // Match device paths to measurement checkboxes
+      for (const path of paths) {
+        const pathLower = path.toLowerCase();
+        for (const m of MEASUREMENTS) {
+          const templateBase = m.pathTemplate.split('/{rate}')[0].toLowerCase();
+          if (pathLower.startsWith(templateBase)) {
+            const chk = document.getElementById(`cfg-${m.id}`);
+            if (chk) chk.checked = true;
+            // Extract rate from path
+            if (m.rates.length > 0) {
+              const rateMatch = path.match(/\/(\d+)/g);
+              if (rateMatch) {
+                const rate = rateMatch[rateMatch.length - (path.includes('/mV') ? 2 : 1)];
+                if (rate) {
+                  const sel = document.getElementById(`rate-${m.id}`);
+                  if (sel) sel.value = rate.replace('/', '');
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+      onConfigChange(); // reset change tracking
+      originalConfig = getSelectedConfig(); // snapshot after setting
+    }
 
     function getSelectedConfig() {
       const paths = [];
@@ -283,6 +329,57 @@
       return paths;
     }
 
+    function getConfigDiff() {
+      const current = getSelectedConfig();
+      const added = current.filter(p => !originalConfig.includes(p));
+      const removed = originalConfig.filter(p => !current.includes(p));
+      return { added, removed, hasChanges: added.length > 0 || removed.length > 0 };
+    }
+
+    function onConfigChange() {
+      const diff = getConfigDiff();
+      const btn = document.getElementById('btn-apply');
+      // Highlight changed items
+      MEASUREMENTS.forEach(m => {
+        const item = document.getElementById(`cfg-item-${m.id}`);
+        if (item) item.classList.remove('changed');
+      });
+      if (diff.hasChanges) {
+        btn.disabled = false;
+        btn.style.background = ''; btn.style.color = ''; btn.style.cursor = '';
+        // Mark changed items
+        for (const m of MEASUREMENTS) {
+          const path = getSelectedConfig().find(p => p.toLowerCase().includes(m.pathTemplate.split('/{rate}')[0].toLowerCase()));
+          const origPath = originalConfig.find(p => p.toLowerCase().includes(m.pathTemplate.split('/{rate}')[0].toLowerCase()));
+          if ((path && !origPath) || (!path && origPath) || (path && origPath && path !== origPath)) {
+            const item = document.getElementById(`cfg-item-${m.id}`);
+            if (item) item.classList.add('changed');
+          }
+        }
+      } else {
+        btn.disabled = true;
+        btn.style.background = '#ccc'; btn.style.color = '#666'; btn.style.cursor = 'not-allowed';
+      }
+      // Hide diff box if open
+      document.getElementById('config-diff-box').style.display = 'none';
+    }
+
+    function showConfigDiff() {
+      const diff = getConfigDiff();
+      if (!diff.hasChanges) return;
+      let html = '';
+      for (const p of diff.removed) html += `<div class="config-diff-remove">− ${p}</div>`;
+      for (const p of diff.added) html += `<div class="config-diff-add">+ ${p}</div>`;
+      document.getElementById('config-diff-content').innerHTML = html;
+      document.getElementById('config-diff-box').style.display = '';
+      document.getElementById('config-confirm').value = '';
+      document.getElementById('btn-config').disabled = true;
+    }
+
+    function cancelConfigDiff() {
+      document.getElementById('config-diff-box').style.display = 'none';
+    }
+
     function updateDeviceUI(info) {
       deviceState = info.dlstate;
       const isLogging = deviceState === 3;
@@ -298,30 +395,20 @@
         <div class="card"><h3>${info.serial}</h3>
         <div class="meta">${info.product_name} v${info.app_version} | Battery: ${info.battery}% | State: ${info.datalogger_state} | ${memInfo}</div></div>`;
 
-      // Current config
-      const configDisplay = document.getElementById('current-config-display');
-      if (info.current_config) {
-        const paths = info.current_config.split('\0').filter(p => p);
-        configDisplay.innerHTML = `<strong>Current config:</strong> ${paths.join(', ')}`;
-      } else {
-        configDisplay.innerHTML = '<em>No configuration set</em>';
-      }
+      // Set config checkboxes from device
+      setConfigFromDevice(info.current_config || '');
 
       // Config editor state
       const readonlyMsg = document.getElementById('config-readonly-msg');
-      const confirmInput = document.getElementById('config-confirm');
       if (isLogging) {
         readonlyMsg.style.display = '';
-        confirmInput.disabled = true;
-        document.getElementById('btn-config').disabled = true;
-        // Disable all checkboxes and selects
         document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = true);
+        document.getElementById('btn-apply').disabled = true;
       } else {
         readonlyMsg.style.display = 'none';
-        confirmInput.disabled = false;
-        confirmInput.value = '';
         document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = false);
       }
+      document.getElementById('config-diff-box').style.display = 'none';
 
       // Logging buttons
       document.getElementById('btn-start-log').disabled = isLogging;
@@ -380,18 +467,24 @@
     }
 
     async function applyConfig() {
+      const diff = getConfigDiff();
       const paths = getSelectedConfig();
       if (!paths.length) { alert('Select at least one measurement'); return; }
       try {
         const resp = await fetch('/api/device/config', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial: connectedSerial, paths }),
+          body: JSON.stringify({ serial: connectedSerial, paths, audit: { previous: originalConfig, added: diff.added, removed: diff.removed, timestamp: new Date().toISOString() } }),
         });
         if (!resp.ok) throw new Error((await resp.json()).detail || 'Config failed');
+        // Update state
+        originalConfig = [...paths];
+        document.getElementById('config-diff-box').style.display = 'none';
         document.getElementById('config-confirm').value = '';
-        document.getElementById('btn-config').disabled = true;
-        document.getElementById('current-config-display').innerHTML = `<strong>Current config:</strong> ${paths.join(', ')}`;
+        document.getElementById('btn-apply').disabled = true;
+        document.getElementById('btn-apply').style.background = '#ccc';
+        document.getElementById('btn-apply').style.color = '#666';
+        MEASUREMENTS.forEach(m => { const item = document.getElementById(`cfg-item-${m.id}`); if (item) item.classList.remove('changed'); });
         alert('Configuration applied successfully');
       } catch (e) {
         document.getElementById('stream-error').style.display = '';

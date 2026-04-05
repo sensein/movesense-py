@@ -171,6 +171,7 @@ def create_app(data_dir: Path) -> FastAPI:
         from ..sensor import SensorCommand
         serial = request.get("serial", "")
         paths = request.get("paths", [])
+        audit = request.get("audit", {})
         if not serial or not paths:
             raise HTTPException(400, detail="serial and paths required")
         try:
@@ -183,6 +184,24 @@ def create_app(data_dir: Path) -> FastAPI:
                 result = await sensor.configure_device(config_data)
                 if not result.get("success"):
                     raise HTTPException(500, detail=f"Config failed: {result.get('error')}")
+
+                # Write audit log
+                audit_dir = data_dir / serial
+                audit_dir.mkdir(parents=True, exist_ok=True)
+                audit_file = audit_dir / "audit.jsonl"
+                audit_entry = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "action": "config_change",
+                    "serial": serial,
+                    "new_paths": paths,
+                    "previous_paths": audit.get("previous", []),
+                    "added": audit.get("added", []),
+                    "removed": audit.get("removed", []),
+                }
+                with open(audit_file, "a") as f:
+                    f.write(json.dumps(audit_entry) + "\n")
+                log.info(f"Config change audit: {audit_entry}")
+
                 return {"status": "configured", "paths": paths}
         except HTTPException:
             raise
