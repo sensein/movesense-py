@@ -12,6 +12,8 @@ dependencies = [
     "aiofiles>=25.1",
     "zarr>=3.0",
     "click>=8.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
     "pyobjc-core>=11.1; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=11.1; sys_platform == 'darwin'",
     "pyobjc-framework-CoreBluetooth>=11.1; sys_platform == 'darwin'",
@@ -22,6 +24,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "httpx>=0.28",
 ]
 
 [project.scripts]

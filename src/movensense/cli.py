@@ -407,6 +407,45 @@ def live(serial_numbers, paths, duration):
             click.echo(f"Device {serial} error: {result.get('error')}", err=True)
 
 
+@cli.command()
+@_data_dir_option
+@click.option("--port", default=8585, show_default=True, help="Server port")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Server host")
+def serve(data_dir, port, host):
+    """Start the data server for browsing collected sensor data.
+
+    Exposes a REST API and browser UI at http://{host}:{port}.
+    Requires collected data in the data directory (from `movensense fetch`).
+    """
+    from pathlib import Path
+
+    import uvicorn
+
+    from .server.app import create_app
+
+    data_path = Path(data_dir)
+    app = create_app(data_path)
+
+    token = app.state.token
+    device_count = len(app.state.scanner.devices)
+    session_count = sum(
+        len(sessions)
+        for dates in app.state.scanner._index.values()
+        for sessions in dates.values()
+    )
+
+    click.echo("Movensense Data Server")
+    click.echo(f"  URL:     http://{host}:{port}")
+    click.echo(f"  Token:   {token}")
+    click.echo(f"  Data:    {data_path}")
+    click.echo(f"  Devices: {device_count}, Sessions: {session_count}")
+    click.echo()
+    click.echo(f"Open in browser: http://{host}:{port}/?token={token}")
+    click.echo()
+
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
 def main():
     cli()
 
