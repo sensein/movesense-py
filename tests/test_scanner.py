@@ -88,3 +88,50 @@ class TestDataScanner:
         result = scanner.get_channel_data("000000000000", "2026-04-04", 1, "MeasAcc")
         assert len(result["data"]) == 100
         assert len(result["data"][0]) == 3  # x, y, z
+
+
+class TestComputeCoverage:
+    def test_empty_month(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        result = scanner.compute_coverage("000000000000", 2026, 3)  # March — no data
+        assert result is not None
+        assert result["days"] == []
+        assert result["summary"]["days_with_data"] == 0
+
+    def test_month_with_data(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        result = scanner.compute_coverage("000000000000", 2026, 4)
+        assert len(result["days"]) == 1
+        assert result["days"][0]["date"] == "2026-04-04"
+        assert result["days"][0]["session_count"] == 1
+        assert result["days"][0]["total_duration_s"] > 0
+
+    def test_coverage_level_partial(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        result = scanner.compute_coverage("000000000000", 2026, 4)
+        # 500 ECG samples at 200Hz = 2.5 seconds — partial
+        assert result["days"][0]["level"] == "partial"
+
+    def test_summary_stats(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        result = scanner.compute_coverage("000000000000", 2026, 4)
+        summary = result["summary"]
+        assert summary["days_with_data"] == 1
+        assert summary["total_hours"] >= 0
+        assert summary["avg_daily_hours"] >= 0
+        assert summary["longest_gap_days"] == 0
+
+    def test_nonexistent_device(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        assert scanner.compute_coverage("NONEXISTENT", 2026, 4) is None
+
+    def test_channels_in_coverage(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        result = scanner.compute_coverage("000000000000", 2026, 4)
+        assert "MeasECGmV" in result["days"][0]["channels"]

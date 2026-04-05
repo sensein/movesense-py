@@ -168,6 +168,27 @@ class TestRefreshEndpoint:
         assert body["devices"] >= 1
 
 
+class TestCoverageEndpoint:
+    def test_get_coverage(self, client, auth_headers):
+        resp = client.get("/api/devices/000000000000/coverage/2026/4", headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["year"] == 2026
+        assert body["month"] == 4
+        assert len(body["days"]) == 1
+        assert body["days"][0]["date"] == "2026-04-04"
+        assert body["summary"]["days_with_data"] == 1
+
+    def test_coverage_empty_month(self, client, auth_headers):
+        resp = client.get("/api/devices/000000000000/coverage/2026/1", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["days"] == []
+
+    def test_coverage_404_device(self, client, auth_headers):
+        resp = client.get("/api/devices/NONEXISTENT/coverage/2026/4", headers=auth_headers)
+        assert resp.status_code == 404
+
+
 class TestConcurrentAccess:
     def test_concurrent_requests(self, client, auth_headers):
         """T015a: 10 concurrent requests should all succeed."""

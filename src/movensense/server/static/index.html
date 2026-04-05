@@ -45,12 +45,21 @@
     .channel-picker { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
     .channel-picker label { font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem; }
     #charts { min-height: 100px; }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 1rem; }
+    .cal-header { text-align: center; font-size: 0.75rem; color: var(--muted); padding: 0.25rem; font-weight: 500; }
+    .cal-cell { text-align: center; padding: 0.5rem 0.25rem; border-radius: 0.375rem; border: 1px solid var(--border); font-size: 0.85rem; min-height: 2.5rem; }
+    .cal-cell.cal-substantial { background: #22c55e22; border-color: #22c55e; color: var(--fg); cursor: pointer; }
+    .cal-cell.cal-partial { background: #eab30822; border-color: #eab308; color: var(--fg); cursor: pointer; }
+    .cal-cell.cal-substantial:hover, .cal-cell.cal-partial:hover { opacity: 0.8; }
+    .cal-cell.empty { border-color: transparent; }
+    .cal-summary { display: flex; gap: 1.5rem; padding: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; font-size: 0.85rem; }
   </style>
 </head>
 <body>
   <h1>Movensense</h1>
   <div class="tabs">
     <div class="tab active" onclick="switchTab('data')">Data Browser</div>
+    <div class="tab" onclick="switchTab('calendar')">Calendar</div>
     <div class="tab" onclick="switchTab('stream')">Live Stream</div>
   </div>
 
@@ -59,6 +68,18 @@
     <h2 id="subtitle">Loading...</h2>
     <nav class="breadcrumb" id="breadcrumb"></nav>
     <main id="content"><div>Loading...</div></main>
+  </div>
+
+  <!-- Calendar Tab -->
+  <div id="tab-calendar" style="display:none">
+    <div class="stream-controls">
+      <label>Device:
+        <select id="cal-device" onchange="calendarView.setDevice(this.value)">
+          <option value="">Select device...</option>
+        </select>
+      </label>
+    </div>
+    <div id="calendar-container"></div>
   </div>
 
   <!-- Live Stream Tab -->
@@ -87,6 +108,7 @@
   </div>
 
   <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+  <script src="/static/calendar.js"></script>
   <script src="/static/stream.js"></script>
   <script src="/static/app.js"></script>
   <script>
@@ -94,10 +116,40 @@
     function switchTab(tab) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tabs .tab').forEach(t => {
-        if (t.textContent.toLowerCase().includes(tab === 'data' ? 'data' : 'stream')) t.classList.add('active');
+        const text = t.textContent.toLowerCase();
+        if ((tab === 'data' && text.includes('data')) || (tab === 'calendar' && text.includes('calendar')) || (tab === 'stream' && text.includes('stream'))) t.classList.add('active');
       });
       document.getElementById('tab-data').style.display = tab === 'data' ? '' : 'none';
+      document.getElementById('tab-calendar').style.display = tab === 'calendar' ? '' : 'none';
       document.getElementById('tab-stream').style.display = tab === 'stream' ? '' : 'none';
+      if (tab === 'calendar') initCalendar();
+    }
+
+    // Calendar init
+    let calendarView = null;
+    async function initCalendar() {
+      if (!calendarView) {
+        calendarView = new CalendarView('calendar-container', apiFetch, (serial, date) => {
+          switchTab('data');
+          showSessions(serial, date);
+        });
+      }
+      // Populate device dropdown
+      try {
+        const data = await apiFetch('/devices');
+        const sel = document.getElementById('cal-device');
+        const current = sel.value;
+        sel.innerHTML = '<option value="">Select device...</option>';
+        for (const d of data.devices) {
+          sel.innerHTML += `<option value="${d.serial}" ${d.serial === current ? 'selected' : ''}>${d.serial} (${d.date_count} days)</option>`;
+        }
+        if (!current && data.devices.length === 1) {
+          sel.value = data.devices[0].serial;
+          calendarView.setDevice(data.devices[0].serial);
+        } else if (current) {
+          calendarView.setDevice(current);
+        }
+      } catch (e) {}
     }
 
     // Streaming UI logic
