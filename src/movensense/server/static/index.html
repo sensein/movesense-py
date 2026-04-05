@@ -260,47 +260,106 @@
       { id: 'gyro', label: 'Gyroscope', pathTemplate: '/Meas/Gyro/{rate}', rates: [13, 52, 208], defaultRate: 52 },
     ];
 
+    // Channel dependency rules:
+    // IMU9 = ACC + GYRO + MAGN (all 3 from same IMU chip)
+    // IMU6 = ACC + GYRO
+    // IMU6m = ACC + MAGN
+    // Selecting IMU9/6/6m disables the individual components
+    const IMU_GROUPS = {
+      imu9: ['acc', 'gyro', 'magn'],
+      imu6: ['acc', 'gyro'],
+      imu6m: ['acc', 'magn'],
+    };
+
     function buildConfigFromCapabilities(capabilities) {
       MEASUREMENTS = [];
       const el = document.getElementById('config-channels');
       el.innerHTML = '';
 
-      // Build from device capabilities
-      const order = ['ecg', 'acc', 'gyro', 'magn', 'imu6', 'imu6m', 'imu9', 'temp', 'hr'];
-      for (const id of order) {
-        const cap = capabilities[id];
-        if (!cap || !cap.available) continue;
-        const m = {
-          id: id,
-          label: cap.label || id,
-          pathTemplate: cap.path_template || '',
-          rates: cap.rates || [],
-          defaultRate: cap.rates && cap.rates.length > 0 ? cap.rates[Math.floor(cap.rates.length / 2)] : null,
-        };
-        MEASUREMENTS.push(m);
+      // Independent sensor types (ordered by priority)
+      // ECG, IMU9 (includes ACC+GYRO+MAGN), Temp, HR are the 4 independent types
+      const groups = [
+        { title: 'Independent Sensors', ids: ['ecg', 'imu9', 'temp', 'hr'] },
+        { title: 'IMU Variants', ids: ['imu6', 'imu6m'] },
+        { title: 'Individual IMU Components', ids: ['acc', 'gyro', 'magn'] },
+      ];
 
-        let rateHtml = '';
-        if (m.rates.length > 0) {
-          rateHtml = `<select id="rate-${m.id}" onchange="onConfigChange()">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`;
+      for (const group of groups) {
+        const available = group.ids.filter(id => capabilities[id]?.available);
+        if (available.length === 0) continue;
+
+        el.innerHTML += `<div style="font-size:0.75rem;color:#999;margin:0.5rem 0 0.25rem;font-weight:600">${group.title}</div>`;
+
+        for (const id of available) {
+          const cap = capabilities[id];
+          const isDefault = ['ecg', 'imu9', 'temp', 'hr'].includes(id);
+          const m = {
+            id, label: cap.label || id,
+            pathTemplate: cap.path_template || '',
+            rates: cap.rates || [],
+            defaultRate: cap.rates?.length > 0 ? cap.rates[Math.floor(cap.rates.length / 2)] : null,
+          };
+          MEASUREMENTS.push(m);
+
+          let rateHtml = '';
+          if (m.rates.length > 0) {
+            rateHtml = `<select id="rate-${m.id}" onchange="onConfigChange()">${m.rates.map(r =>
+              `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`
+            ).join('')}</select>`;
+          }
+
+          const isComponent = ['acc', 'gyro', 'magn'].includes(id);
+          const note = isComponent ? ' <span style="color:#999;font-size:0.7rem">(included in IMU9)</span>' : '';
+
+          el.innerHTML += `<div class="config-item" id="cfg-item-${m.id}">
+            <label><input type="checkbox" id="cfg-${m.id}" ${isDefault ? 'checked' : ''} onchange="handleChannelToggle('${m.id}')"> ${m.label}${note} ${cap.unit ? '('+cap.unit+')' : ''}</label>
+            ${rateHtml}
+          </div>`;
         }
-        el.innerHTML += `<div class="config-item" id="cfg-item-${m.id}">
-          <label><input type="checkbox" id="cfg-${m.id}" onchange="onConfigChange()"> ${m.label} ${cap.unit ? '('+cap.unit+')' : ''}</label>
-          ${rateHtml}
-        </div>`;
       }
 
       if (MEASUREMENTS.length === 0) {
-        // Fallback
         MEASUREMENTS = [...FALLBACK_MEASUREMENTS];
         MEASUREMENTS.forEach(m => {
           let rateHtml = m.rates.length > 0
             ? `<select id="rate-${m.id}" onchange="onConfigChange()">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`
             : '';
           el.innerHTML += `<div class="config-item" id="cfg-item-${m.id}">
-            <label><input type="checkbox" id="cfg-${m.id}" onchange="onConfigChange()"> ${m.label}</label>
+            <label><input type="checkbox" id="cfg-${m.id}" checked onchange="onConfigChange()"> ${m.label}</label>
             ${rateHtml}
           </div>`;
         });
+      }
+
+      enforceIMUDependencies();
+    }
+
+    function handleChannelToggle(id) {
+      enforceIMUDependencies();
+      onConfigChange();
+    }
+
+    function enforceIMUDependencies() {
+      // When an IMU combo is selected, disable its individual components
+      for (const [imuId, components] of Object.entries(IMU_GROUPS)) {
+        const imuChk = document.getElementById(`cfg-${imuId}`);
+        if (!imuChk) continue;
+        const imuSelected = imuChk.checked;
+
+        for (const comp of components) {
+          const compChk = document.getElementById(`cfg-${comp}`);
+          const compItem = document.getElementById(`cfg-item-${comp}`);
+          if (!compChk || !compItem) continue;
+
+          if (imuSelected) {
+            compChk.checked = false;
+            compChk.disabled = true;
+            compItem.style.opacity = '0.4';
+          } else {
+            compChk.disabled = false;
+            compItem.style.opacity = '1';
+          }
+        }
       }
     }
 
