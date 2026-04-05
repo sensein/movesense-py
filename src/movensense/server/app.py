@@ -107,6 +107,19 @@ def create_app(data_dir: Path) -> FastAPI:
         )
         return {"status": "refreshed", "devices": len(scanner.devices), "sessions": total_sessions}
 
+    @app.get("/api/devices/{serial}/dates/{date}/sessions/{log_id}/channels/{channel_name}/downsample")
+    async def downsample_channel(
+        serial: str, date: str, log_id: int, channel_name: str,
+        start: float = Query(0, ge=0),
+        end: float = Query(None),
+        buckets: int = Query(1000, ge=1, le=10000),
+        _: str = Depends(verify_token),
+    ):
+        result = scanner.downsample_channel(serial, date, log_id, channel_name, start=start, end=end, buckets=buckets)
+        if result is None:
+            raise HTTPException(404, detail=f"Channel not found: {channel_name}")
+        return result
+
     @app.get("/api/devices/{serial}/coverage/{year}/{month}")
     async def get_coverage(serial: str, year: int, month: int, _: str = Depends(verify_token)):
         result = scanner.compute_coverage(serial, year, month)

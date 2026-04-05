@@ -90,6 +90,52 @@ class TestDataScanner:
         assert len(result["data"][0]) == 3  # x, y, z
 
 
+class TestDownsampleChannel:
+    def test_downsample_1d_returns_min_max_mean(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        result = scanner.downsample_channel("000000000000", "2026-04-04", 1, "MeasECGmV", buckets=10)
+        assert result is not None
+        assert len(result["data"]["min"]) == 10
+        assert len(result["data"]["max"]) == 10
+        assert len(result["data"]["mean"]) == 10
+        assert len(result["data"]["time"]) == 10
+
+    def test_downsample_multi_axis(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        result = scanner.downsample_channel("000000000000", "2026-04-04", 1, "MeasAcc", buckets=5)
+        assert result is not None
+        assert "columns" in result
+        assert "x_min" in result["data"]
+        assert "y_max" in result["data"]
+        assert "z_mean" in result["data"]
+
+    def test_downsample_returns_raw_when_few_samples(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        # 500 ECG samples, request 1000 buckets → should return raw
+        result = scanner.downsample_channel("000000000000", "2026-04-04", 1, "MeasECGmV", buckets=1000)
+        assert "values" in result["data"]  # raw mode
+        assert len(result["data"]["values"]) == 500
+
+    def test_downsample_time_range(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        # ECG at 200Hz, 500 samples = 2.5s. Select first 1 second.
+        result = scanner.downsample_channel("000000000000", "2026-04-04", 1, "MeasECGmV", start=0, end=1.0, buckets=10)
+        assert result is not None
+        assert result["start"] == 0.0
+        # Should have fewer samples than full dataset
+        data_len = len(result["data"].get("values", result["data"].get("min", [])))
+        assert data_len <= 200  # at most 1 second of data at 200Hz
+
+    def test_downsample_nonexistent_channel(self, fake_data_dir):
+        scanner = DataScanner(fake_data_dir)
+        scanner.scan()
+        assert scanner.downsample_channel("000000000000", "2026-04-04", 1, "FAKE") is None
+
+
 class TestComputeCoverage:
     def test_empty_month(self, fake_data_dir):
         scanner = DataScanner(fake_data_dir)
