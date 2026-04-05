@@ -284,7 +284,6 @@
     // Set checkboxes/rates from device config string
     function setConfigFromDevice(configStr) {
       const paths = configStr ? configStr.split('\0').filter(p => p && p !== '/Time/Detailed') : [];
-      originalConfig = [...paths];
 
       // Uncheck all first
       MEASUREMENTS.forEach(m => {
@@ -292,31 +291,40 @@
         if (chk) chk.checked = false;
       });
 
-      // Match device paths to measurement checkboxes
-      for (const path of paths) {
-        const pathLower = path.toLowerCase();
-        for (const m of MEASUREMENTS) {
-          const templateBase = m.pathTemplate.split('/{rate}')[0].toLowerCase();
-          if (pathLower.startsWith(templateBase)) {
-            const chk = document.getElementById(`cfg-${m.id}`);
-            if (chk) chk.checked = true;
-            // Extract rate from path
-            if (m.rates.length > 0) {
-              const rateMatch = path.match(/\/(\d+)/g);
-              if (rateMatch) {
-                const rate = rateMatch[rateMatch.length - (path.includes('/mV') ? 2 : 1)];
-                if (rate) {
-                  const sel = document.getElementById(`rate-${m.id}`);
-                  if (sel) sel.value = rate.replace('/', '');
+      if (paths.length > 0) {
+        // Match device paths to measurement checkboxes
+        for (const path of paths) {
+          const pathLower = path.toLowerCase();
+          for (const m of MEASUREMENTS) {
+            const templateBase = m.pathTemplate.split('/{rate}')[0].toLowerCase();
+            if (pathLower.startsWith(templateBase)) {
+              const chk = document.getElementById(`cfg-${m.id}`);
+              if (chk) chk.checked = true;
+              if (m.rates.length > 0) {
+                const rateMatch = path.match(/\/(\d+)/g);
+                if (rateMatch) {
+                  const rate = rateMatch[rateMatch.length - (path.includes('/mV') ? 2 : 1)];
+                  if (rate) {
+                    const sel = document.getElementById(`rate-${m.id}`);
+                    if (sel) sel.value = rate.replace('/', '');
+                  }
                 }
               }
+              break;
             }
-            break;
           }
         }
+      } else {
+        // No config on device — select sensible defaults
+        const defaults = ['ecg', 'acc'];
+        defaults.forEach(id => {
+          const chk = document.getElementById(`cfg-${id}`);
+          if (chk) chk.checked = true;
+        });
       }
-      onConfigChange(); // reset change tracking
-      originalConfig = getSelectedConfig(); // snapshot after setting
+
+      originalConfig = getSelectedConfig(); // snapshot current state
+      onConfigChange();
     }
 
     function getSelectedConfig() {
@@ -441,7 +449,7 @@
 
     async function connectDevice() {
       const serial = document.getElementById('stream-serial').value.trim();
-      if (!serial) { alert('Enter a device serial'); return; }
+      if (!serial) { document.getElementById('stream-error').style.display=''; document.getElementById('stream-error').textContent='Enter a device serial number.'; return; }
 
       document.getElementById('stream-error').style.display = 'none';
       document.getElementById('stream-state').textContent = 'Connecting...';
@@ -489,7 +497,7 @@
     async function applyConfig() {
       const diff = getConfigDiff();
       const paths = getSelectedConfig();
-      if (!paths.length) { alert('Select at least one measurement'); return; }
+      if (!paths.length) { document.getElementById('stream-error').style.display=''; document.getElementById('stream-error').textContent='Select at least one measurement.'; return; }
       showBusy('Applying configuration to device...');
       try {
         const resp = await fetch('/api/device/config', {
@@ -507,7 +515,7 @@
         document.getElementById('btn-apply').style.color = '#666';
         MEASUREMENTS.forEach(m => { const item = document.getElementById(`cfg-item-${m.id}`); if (item) item.classList.remove('changed'); });
         hideBusy();
-        alert('Configuration applied successfully');
+        document.getElementById('stream-error').style.display=''; document.getElementById('stream-error').innerHTML='<span style="color:#22c55e">✓ Configuration applied successfully</span>';
       } catch (e) {
         hideBusy();
         document.getElementById('stream-error').style.display = '';
@@ -592,7 +600,7 @@
     async function eraseLogs() {
       if (!connectedSerial) return;
       const confirmed = prompt('This will permanently erase ALL logged data from the device.\nType "erase" to confirm:');
-      if (confirmed !== 'erase') { alert('Erase cancelled'); return; }
+      if (confirmed !== 'erase') { document.getElementById('fetch-status').textContent='Erase cancelled.'; return; }
 
       const statusEl = document.getElementById('fetch-status');
       showBusy('Erasing device memory...');
@@ -613,7 +621,11 @@
 
     function startStreaming() {
       const channels = getSelectedConfig();
-      if (!channels.length) { alert('Select at least one channel in config'); return; }
+      if (!channels.length) {
+        document.getElementById('stream-error').style.display = '';
+        document.getElementById('stream-error').textContent = 'Select at least one channel in the configuration panel above.';
+        return;
+      }
       chartManager.clear();
       document.getElementById('stream-error').style.display = 'none';
       streamClient.startStream(connectedSerial, channels);

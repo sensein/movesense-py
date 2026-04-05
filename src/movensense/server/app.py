@@ -141,13 +141,16 @@ def create_app(data_dir: Path) -> FastAPI:
                 battery = await sensor.get_battery_level()
                 status.update(battery)
 
-                # Read current datalogger config
-                config_result = await sensor.get_resource("/Mem/DataLogger/Config")
+                # Read current datalogger config (may timeout while logging)
                 current_config = ""
-                if config_result.get("success"):
-                    raw = config_result.get("data", b"")
-                    if raw:
-                        current_config = raw.decode("utf-8", errors="ignore").rstrip("\x00")
+                try:
+                    config_result = await sensor.get_resource("/Mem/DataLogger/Config")
+                    if config_result.get("success"):
+                        raw = config_result.get("data", b"")
+                        if raw:
+                            current_config = raw.decode("utf-8", errors="ignore").rstrip("\x00")
+                except Exception:
+                    log.warning("Could not read device config (device may be logging)")
 
                 # Check memory status
                 is_full = False
