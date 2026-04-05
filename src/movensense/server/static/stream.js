@@ -14,11 +14,15 @@ class StreamClient {
     this.ws = new WebSocket(`${proto}//${location.host}/ws/stream?token=${TOKEN}`);
 
     this.ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'data') this.onData(msg);
-      else if (msg.type === 'status') this.onStatus(msg);
-      else if (msg.type === 'error') this.onError(msg.message);
-      else if (msg.type === 'device_info') this.onStatus(msg);
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'data') this.onData(msg);
+        else if (msg.type === 'status') this.onStatus(msg);
+        else if (msg.type === 'error') this.onError(msg.message);
+        else if (msg.type === 'device_info') this.onStatus(msg);
+      } catch (err) {
+        // Skip malformed JSON (e.g., NaN values from BLE)
+      }
     };
     this.ws.onclose = () => this.onStatus({ type: 'status', state: 'disconnected' });
     this.ws.onerror = () => this.onError('WebSocket connection failed');

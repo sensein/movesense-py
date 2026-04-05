@@ -159,13 +159,16 @@ class StreamManager:
 
     def _parse_payload(self, payload: bytes) -> list:
         """Parse raw BLE data payload into numeric values."""
-        # BLE payloads are raw bytes — try to interpret as float32 array
+        import math
         import struct
         values = []
         offset = 0
         while offset + 4 <= len(payload):
             try:
                 val = struct.unpack_from("<f", payload, offset)[0]
+                # Replace NaN/Inf with 0 — these are invalid BLE readings
+                if math.isnan(val) or math.isinf(val):
+                    val = 0.0
                 values.append(round(val, 6))
                 offset += 4
             except struct.error:
