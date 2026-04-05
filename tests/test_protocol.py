@@ -136,10 +136,18 @@ class TestParseGeneric:
         assert result.values == []
 
     def test_temp(self):
-        pkt = struct.pack("<I", 100) + struct.pack("<f", 310.5)
+        # Temp subscription: float Measurement directly (no timestamp prefix)
+        pkt = struct.pack("<f", 310.5) + b"\x00\x00\x00\x00"  # + padding
         result = parse_subscription_packet(pkt, "/Meas/Temp")
         assert len(result.values) == 1
         assert abs(result.values[0] - 310.5) < 0.01
+
+    def test_hr(self):
+        # HR subscription: float average + uint16 rr
+        pkt = struct.pack("<f", 72.5) + struct.pack("<H", 828)
+        result = parse_subscription_packet(pkt, "/Meas/HR")
+        assert len(result.values) == 1
+        assert abs(result.values[0] - 72.5) < 0.1
 
 
 class TestInfoParser:
