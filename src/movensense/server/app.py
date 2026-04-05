@@ -107,6 +107,103 @@ def create_app(data_dir: Path) -> FastAPI:
         )
         return {"status": "refreshed", "devices": len(scanner.devices), "sessions": total_sessions}
 
+    @app.post("/api/devices/{serial}/dates/{date}/sessions/{log_id}/window-stats")
+    async def window_stats(
+        serial: str, date: str, log_id: int,
+        start: float = Query(0, ge=0),
+        end: float = Query(None),
+        _: str = Depends(verify_token),
+    ):
+        """Compute physio analytics for a time window."""
+        import numpy as np
+        from movensense.physio.pipeline import analyze_session
+        from movensense.physio.ecg import detect_r_peaks, compute_rr_intervals, compute_hrv
+        from movensense.physio.quality import ecg_signal_quality
+
+        sessions = scanner.get_sessions(serial, date)
+        if not sessions:
+            raise HTTPException(404, detail="Session not found")
+        session = next((s for s in sessions if s["log_id"] == log_id), None)
+        if not session:
+            raise HTTPException(404, detail="Session not found")
+
+        import zarr
+        try:
+            store = zarr.open_group(session["zarr_path"], mode="r")
+        except Exception as e:
+            raise HTTPException(500, detail=f"Zarr error: {e}")
+
+        result = {"start": start, "end": end, "channels": {}}
+
+        for ch_name in store:
+            group = store[ch_name]
+            if "data" not in group:
+                continue
+
+            arr = group["data"][:]
+            rate = group.attrs.get("sampling_rate_hz", 1.0)
+            s_idx = max(0, int(start * rate))
+            e_idx = int(end * rate) if end else arr.shape[0]
+            e_idx = min(e_idx, arr.shape[0])
+            chunk = arr[s_idx:e_idx]
+
+            if chunk.size == 0:
+                continue
+
+            ch_stats = {"sample_count": len(chunk), "sampling_rate_hz": rate}
+
+            if chunk.ndim == 1:
+                ch_stats.update({
+                    "min": round(float(np.min(chunk)), 4),
+                    "max": round(float(np.max(chunk)), 4),
+                    "mean": round(float(np.mean(chunk)), 4),
+                    "std": round(float(np.std(chunk)), 4),
+                })
+            else:
+                cols = ["x", "y", "z", "a", "b", "c", "d", "e", "f"][:chunk.shape[1]]
+                for i, col in enumerate(cols):
+                    ch_stats[f"{col}_min"] = round(float(np.min(chunk[:, i])), 4)
+                    ch_stats[f"{col}_max"] = round(float(np.max(chunk[:, i])), 4)
+                    ch_stats[f"{col}_mean"] = round(float(np.mean(chunk[:, i])), 4)
+                    ch_stats[f"{col}_std"] = round(float(np.std(chunk[:, i])), 4)
+                mag = np.sqrt(np.sum(chunk ** 2, axis=1))
+                ch_stats["magnitude_mean"] = round(float(np.mean(mag)), 4)
+
+            # ECG-specific analytics
+            sensor_type = group.attrs.get("sensor_type", "")
+            if "ecg" in sensor_type.lower() or "ecg" in ch_name.lower():
+                if chunk.ndim == 1 and len(chunk) > 10:
+                    try:
+                        peaks = detect_r_peaks(chunk, rate)
+                        if len(peaks) >= 2:
+                            rr = compute_rr_intervals(peaks, rate)
+                            hrv = compute_hrv(rr)
+                            ch_stats["hr_bpm"] = hrv["mean_hr"]
+                            ch_stats["hrv_sdnn"] = hrv["sdnn"]
+                            ch_stats["hrv_rmssd"] = hrv["rmssd"]
+                            ch_stats["r_peak_count"] = len(peaks)
+                        sqi = ecg_signal_quality(chunk, rate, window_s=min(5.0, len(chunk) / rate))
+                        if sqi:
+                            ch_stats["sqi"] = sqi[0]["sqi"]
+                            ch_stats["sqi_level"] = sqi[0]["level"]
+                    except Exception:
+                        pass
+
+            # Activity classification for ACC
+            if chunk.ndim == 2 and chunk.shape[1] >= 3:
+                try:
+                    from movensense.physio.motion import classify_activity
+                    labels = classify_activity(chunk, rate)
+                    if len(labels) > 0:
+                        activity_pct = round(100 * sum(1 for l in labels if l == "activity") / len(labels), 1)
+                        ch_stats["activity_pct"] = activity_pct
+                except Exception:
+                    pass
+
+            result["channels"][ch_name] = ch_stats
+
+        return result
+
     @app.get("/api/devices/{serial}/dates/{date}/sessions/{log_id}/channels/{channel_name}/downsample")
     async def downsample_channel(
         serial: str, date: str, log_id: int, channel_name: str,
