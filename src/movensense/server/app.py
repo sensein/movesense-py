@@ -107,6 +107,13 @@ def create_app(data_dir: Path) -> FastAPI:
         )
         return {"status": "refreshed", "devices": len(scanner.devices), "sessions": total_sessions}
 
+    @app.get("/api/devices/{serial}/coverage/{year}/{month}")
+    async def get_coverage(serial: str, year: int, month: int, _: str = Depends(verify_token)):
+        result = scanner.compute_coverage(serial, year, month)
+        if result is None:
+            raise HTTPException(404, detail=f"Device not found: {serial}")
+        return result
+
     # --- WebSocket Streaming ---
 
     stream_manager = StreamManager()

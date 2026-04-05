@@ -187,6 +187,71 @@ class DataScanner:
             log.error(f"Error reading channel data: {e}")
             return None
 
+    def compute_coverage(self, serial: str, year: int, month: int, threshold_hours: float = 8.0) -> Optional[dict]:
+        """Compute per-day data coverage for a device in a given month."""
+        dates = self.get_dates(serial)
+        if dates is None:
+            return None
+
+        prefix = f"{year:04d}-{month:02d}"
+        days = []
+        for date_str in dates:
+            if not date_str.startswith(prefix):
+                continue
+            sessions = self.get_sessions(serial, date_str)
+            if not sessions:
+                continue
+
+            total_duration = 0.0
+            all_channels = set()
+            for s in sessions:
+                for ch in s.get("channel_details", []):
+                    all_channels.add(ch["name"])
+                    rate = ch.get("sampling_rate_hz", 0)
+                    count = ch.get("sample_count", 0)
+                    if rate > 0:
+                        dur = count / rate
+                        total_duration = max(total_duration, dur)  # longest channel = session duration
+
+            hours = total_duration / 3600
+            level = "substantial" if hours >= threshold_hours else ("partial" if hours > 0 else "none")
+
+            days.append({
+                "date": date_str,
+                "session_count": len(sessions),
+                "total_duration_s": round(total_duration, 1),
+                "channels": sorted(all_channels),
+                "level": level,
+            })
+
+        # Summary
+        days_with_data = len(days)
+        total_hours = sum(d["total_duration_s"] for d in days) / 3600
+        avg_daily = total_hours / days_with_data if days_with_data else 0
+
+        # Longest gap
+        sorted_dates = sorted(d["date"] for d in days)
+        longest_gap = 0
+        for i in range(1, len(sorted_dates)):
+            from datetime import date as dt_date
+            d1 = dt_date.fromisoformat(sorted_dates[i - 1])
+            d2 = dt_date.fromisoformat(sorted_dates[i])
+            gap = (d2 - d1).days - 1
+            longest_gap = max(longest_gap, gap)
+
+        return {
+            "serial": serial,
+            "year": year,
+            "month": month,
+            "days": days,
+            "summary": {
+                "days_with_data": days_with_data,
+                "total_hours": round(total_hours, 1),
+                "avg_daily_hours": round(avg_daily, 1),
+                "longest_gap_days": longest_gap,
+            },
+        }
+
     def get_session_metadata(self, serial: str, date: str, log_id: int) -> Optional[dict]:
         """Get root metadata for a session."""
         sessions = self.get_sessions(serial, date)
