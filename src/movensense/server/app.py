@@ -1,15 +1,18 @@
 """FastAPI application for serving Movesense sensor data."""
 
+import asyncio
+import json
 import logging
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from .auth import get_or_create_token, set_active_token, verify_token
+from .auth import get_active_token, get_or_create_token, set_active_token, verify_token
 from .scanner import DataScanner
+from .stream import StreamManager
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +106,55 @@ def create_app(data_dir: Path) -> FastAPI:
             for sessions in dates.values()
         )
         return {"status": "refreshed", "devices": len(scanner.devices), "sessions": total_sessions}
+
+    # --- WebSocket Streaming ---
+
+    stream_manager = StreamManager()
+    app.state.stream_manager = stream_manager
+
+    @app.websocket("/ws/stream")
+    async def websocket_stream(ws: WebSocket):
+        # Validate token from query param
+        ws_token = ws.query_params.get("token", "")
+        if ws_token != get_active_token():
+            await ws.close(code=1008, reason="Authentication failed")
+            return
+
+        await ws.accept()
+        client_queue = await stream_manager.add_client()
+
+        # Two concurrent tasks: read from client, write to client
+        async def reader():
+            try:
+                while True:
+                    raw = await ws.receive_text()
+                    msg = json.loads(raw)
+                    msg_type = msg.get("type")
+                    if msg_type == "start":
+                        serial = msg.get("serial", "")
+                        channels = msg.get("channels", [])
+                        await stream_manager.start(serial, channels)
+                    elif msg_type == "stop":
+                        await stream_manager.stop()
+            except WebSocketDisconnect:
+                pass
+            except Exception as e:
+                log.error(f"WebSocket reader error: {e}")
+
+        async def writer():
+            try:
+                while True:
+                    message = await client_queue.get()
+                    await ws.send_text(json.dumps(message))
+            except WebSocketDisconnect:
+                pass
+            except Exception as e:
+                log.error(f"WebSocket writer error: {e}")
+
+        try:
+            await asyncio.gather(reader(), writer())
+        finally:
+            stream_manager.remove_client(client_queue)
 
     # --- Static UI ---
 
