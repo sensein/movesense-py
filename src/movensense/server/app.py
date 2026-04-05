@@ -107,6 +107,75 @@ def create_app(data_dir: Path) -> FastAPI:
         )
         return {"status": "refreshed", "devices": len(scanner.devices), "sessions": total_sessions}
 
+    # --- Device Control (Live Stream tab) ---
+
+    @app.post("/api/device/config")
+    async def device_config(request: dict, _: str = Depends(verify_token)):
+        """Configure device measurement paths and start logging."""
+        from ..sensor import SensorCommand
+        serial = request.get("serial", "")
+        paths = request.get("paths", [])
+        if not serial or not paths:
+            raise HTTPException(400, detail="serial and paths required")
+        try:
+            async with SensorCommand(serial) as sensor:
+                if "/Time/Detailed" not in paths:
+                    paths.append("/Time/Detailed")
+                config_data = bytearray()
+                for path in paths:
+                    config_data.extend(path.encode("utf-8") + b"\0")
+                result = await sensor.configure_device(config_data)
+                if not result.get("success"):
+                    raise HTTPException(500, detail=f"Config failed: {result.get('error')}")
+                return {"status": "configured", "paths": paths}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
+    @app.post("/api/device/start")
+    async def device_start(request: dict, _: str = Depends(verify_token)):
+        """Start logging on device."""
+        from ..sensor import SensorCommand
+        serial = request.get("serial", "")
+        if not serial:
+            raise HTTPException(400, detail="serial required")
+        try:
+            async with SensorCommand(serial) as sensor:
+                status = await sensor.get_status()
+                if status.get("dlstate") == 3:
+                    return {"status": "already_logging"}
+                result = await sensor.start_logging()
+                if not result.get("success"):
+                    raise HTTPException(500, detail=f"Start failed: {result.get('error')}")
+                return {"status": "logging_started"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
+    @app.post("/api/device/stop")
+    async def device_stop(request: dict, _: str = Depends(verify_token)):
+        """Stop logging on device."""
+        from ..sensor import SensorCommand
+        import asyncio
+        serial = request.get("serial", "")
+        if not serial:
+            raise HTTPException(400, detail="serial required")
+        try:
+            async with SensorCommand(serial) as sensor:
+                result = await sensor.stop_logging()
+                if not result.get("success"):
+                    raise HTTPException(500, detail=f"Stop failed: {result.get('error')}")
+                boot = await sensor.set_system_mode(5)
+                await sensor.disconnect()
+                await asyncio.sleep(4)
+                return {"status": "logging_stopped"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, detail=str(e))
+
     @app.get("/api/devices/{serial}/dates/{date}/sessions/{log_id}/window-stats")
     async def window_stats(
         serial: str, date: str, log_id: int,
