@@ -6,6 +6,7 @@ import logging
 from enum import Enum
 from typing import Optional
 
+from ..protocol import parse_subscription_packet
 from ..sensor import SensorCommand, GSP_RESP_DATA, GSP_RESP_DATA_PART2, DataView
 
 log = logging.getLogger(__name__)
@@ -133,13 +134,15 @@ class StreamManager:
                     if channel and resp_code in [2, 3]:  # GSP_RESP_DATA, GSP_RESP_DATA_PART2
                         payload = response.get("data_payload", b"")
                         if len(payload) > 0:
-                            values = self._parse_payload(payload, channel=channel)
-                            await self._broadcast({
-                                "type": "data",
-                                "channel": channel,
-                                "timestamp": response.get("reference", 0),
-                                "values": values,
-                            })
+                            parsed = parse_subscription_packet(payload, channel)
+                            if parsed.values:
+                                await self._broadcast({
+                                    "type": "data",
+                                    "channel": channel,
+                                    "timestamp": parsed.timestamp_ms,
+                                    "values": parsed.values,
+                                    "unit": parsed.unit,
+                                })
 
                 except asyncio.TimeoutError:
                     # Check if BLE still connected
