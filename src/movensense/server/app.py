@@ -152,33 +152,57 @@ def create_app(data_dir: Path) -> FastAPI:
                 except Exception:
                     log.warning("Could not read device config (device may be logging)")
 
-                # Probe device capabilities — what measurements and rates it supports
+                # Probe device capabilities from /Info endpoints
+                from ..protocol import parse_info_response, SENSOR_FORMATS
                 capabilities = {}
-                info_paths = [
-                    ("ecg", "/Meas/ECG/Info"),
-                    ("acc", "/Meas/Acc/Info"),
-                    ("gyro", "/Meas/Gyro/Info"),
-                    ("magn", "/Meas/Magn/Info"),
-                    ("hr", "/Meas/HR/Info"),
-                    ("temp", "/Meas/Temp/Info"),
-                ]
-                for cap_name, cap_path in info_paths:
-                    try:
-                        r = await sensor.get_resource(cap_path)
-                        if r.get("success"):
-                            capabilities[cap_name] = {"available": True, "raw": r.get("data", b"").hex()}
-                        else:
-                            capabilities[cap_name] = {"available": False}
-                    except Exception:
-                        capabilities[cap_name] = {"available": False}
 
-                # Also check IMU availability
-                for imu in ["IMU6", "IMU9"]:
+                info_probes = [
+                    ("ecg", "/Meas/ECG/Info", "/Meas/Ecg/{rate}/mV", "ECG", "mV"),
+                    ("acc", "/Meas/Acc/Info", "/Meas/Acc/{rate}", "Accelerometer", "m/s²"),
+                    ("gyro", "/Meas/Gyro/Info", "/Meas/Gyro/{rate}", "Gyroscope", "dps"),
+                    ("magn", "/Meas/Magn/Info", "/Meas/Magn/{rate}", "Magnetometer", "µT"),
+                    ("imu", "/Meas/IMU/Info", None, "IMU", ""),
+                    ("hr", "/Meas/HR/Info", "/Meas/HR", "Heart Rate", "bpm"),
+                    ("temp", "/Meas/Temp/Info", "/Meas/Temp", "Temperature", "K"),
+                ]
+
+                imu_rates = []
+                for sid, path, template, label, unit in info_probes:
                     try:
-                        r = await sensor.get_resource(f"/Meas/{imu}/Info")
-                        capabilities[imu.lower()] = {"available": r.get("success", False)}
+                        r = await sensor.get_resource(path)
+                        if r.get("success"):
+                            raw = r.get("data", b"")
+                            cap = parse_info_response(sid, raw)
+                            entry = {
+                                "available": True,
+                                "label": label,
+                                "unit": unit,
+                                "rates": cap.sample_rates if cap.sample_rates else [],
+                            }
+                            if template:
+                                entry["path_template"] = template
+                            capabilities[sid] = entry
+                            if sid == "imu":
+                                imu_rates = cap.sample_rates
+                        else:
+                            capabilities[sid] = {"available": False, "label": label}
                     except Exception:
-                        capabilities[imu.lower()] = {"available": False}
+                        capabilities[sid] = {"available": False, "label": label}
+
+                # IMU6/9 use the same rates from /Meas/IMU/Info
+                for imu_id, imu_label, imu_template in [
+                    ("imu6", "IMU 6-axis", "/Meas/IMU6/{rate}"),
+                    ("imu6m", "IMU 6-axis (Mag)", "/Meas/IMU6m/{rate}"),
+                    ("imu9", "IMU 9-axis", "/Meas/IMU9/{rate}"),
+                ]:
+                    if imu_rates:
+                        capabilities[imu_id] = {
+                            "available": True, "label": imu_label,
+                            "path_template": imu_template,
+                            "rates": imu_rates, "unit": "",
+                        }
+                    else:
+                        capabilities[imu_id] = {"available": False, "label": imu_label}
 
                 # Check memory status
                 is_full = False
