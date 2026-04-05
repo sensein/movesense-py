@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .auth import get_active_token, get_or_create_token, set_active_token, verify_token
 from .scanner import DataScanner
+from .manifest import DataManifest
 from .stream import StreamManager
 
 log = logging.getLogger(__name__)
@@ -34,10 +35,15 @@ def create_app(data_dir: Path) -> FastAPI:
     scanner = DataScanner(data_dir)
     scanner.scan()
 
+    manifest = DataManifest(data_dir)
+    if not manifest.entries:
+        manifest.rebuild_from_disk()
+
     token = get_or_create_token()
     set_active_token(token)
     app.state.token = token
     app.state.scanner = scanner
+    app.state.manifest = manifest
 
     # --- Public endpoints ---
 
@@ -97,6 +103,18 @@ def create_app(data_dir: Path) -> FastAPI:
         if meta is None:
             raise HTTPException(404, detail=f"Session not found: log {log_id}")
         return meta
+
+    @app.get("/api/timeline")
+    async def timeline(serial: str = Query(None), _: str = Depends(verify_token)):
+        """Get recordings as a time-based list (not folder-based)."""
+        entries = manifest.get_time_ranges(serial=serial)
+        return {"recordings": entries}
+
+    @app.post("/api/manifest/rebuild")
+    async def rebuild_manifest(_: str = Depends(verify_token)):
+        """Rebuild manifest from disk (rescans all Zarr stores)."""
+        manifest.rebuild_from_disk()
+        return {"status": "rebuilt", "entries": len(manifest.entries)}
 
     @app.post("/api/refresh")
     async def refresh(_: str = Depends(verify_token)):

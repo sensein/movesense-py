@@ -142,8 +142,9 @@
       <!-- Logging Control -->
       <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Logging Control</div>
       <div class="stream-controls">
-        <button onclick="startLogging()" id="btn-start-log" disabled>Start Logging</button>
-        <button onclick="stopLogging()" id="btn-stop-log" class="danger" disabled>Stop Logging</button>
+        <button onclick="startLogging()" id="btn-start-log" disabled title="Start recording to flash">🔴 Record</button>
+        <button onclick="stopLogging()" id="btn-stop-log" class="danger" disabled title="Stop recording">⏹ Stop</button>
+        <span id="logging-indicator" style="display:none;font-size:0.85rem;color:#ef4444;font-weight:600;">● Recording in progress</span>
       </div>
 
       <!-- Data Management -->
@@ -415,9 +416,10 @@
       }
       document.getElementById('config-diff-box').style.display = 'none';
 
-      // Logging buttons
+      // Logging buttons + indicator
       document.getElementById('btn-start-log').disabled = isLogging;
       document.getElementById('btn-stop-log').disabled = !isLogging;
+      document.getElementById('logging-indicator').style.display = isLogging ? '' : 'none';
 
       // Streaming buttons
       document.getElementById('btn-start').disabled = false;
@@ -524,6 +526,7 @@
         deviceState = 3;
         document.getElementById('btn-start-log').disabled = true;
         document.getElementById('btn-stop-log').disabled = false;
+        document.getElementById('logging-indicator').style.display = '';
         document.getElementById('stream-state').textContent = 'Connected (Logging)';
         document.getElementById('stream-state').className = 'stream-status streaming';
         // Lock config
@@ -548,6 +551,7 @@
         deviceState = 2;
         document.getElementById('btn-start-log').disabled = false;
         document.getElementById('btn-stop-log').disabled = true;
+        document.getElementById('logging-indicator').style.display = 'none';
         document.getElementById('stream-state').textContent = 'Connected (Ready)';
         document.getElementById('stream-state').className = 'stream-status idle';
         // Unlock config
