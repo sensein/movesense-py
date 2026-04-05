@@ -1,5 +1,5 @@
 // Live streaming WebSocket client + chart manager
-const TOKEN = sessionStorage.getItem('ms_token') || new URLSearchParams(window.location.search).get('token') || '';
+// TOKEN is defined in the global init block (index.html)
 
 class StreamClient {
   constructor(onData, onStatus, onError) {

@@ -1,28 +1,9 @@
 // Movensense Data Browser — minimal SPA
-const API = '/api';
-const params = new URLSearchParams(window.location.search);
-const TOKEN = params.get('token') || sessionStorage.getItem('ms_token') || '';
-if (TOKEN) sessionStorage.setItem('ms_token', TOKEN);
-
+// TOKEN and apiFetch are defined in the global init block (index.html)
 const $ = (id) => document.getElementById(id);
 const content = $('content');
 const breadcrumb = $('breadcrumb');
 const subtitle = $('subtitle');
-
-async function apiFetch(path) {
-  const resp = await fetch(API + path, {
-    headers: { 'Authorization': `Bearer ${TOKEN}` }
-  });
-  if (resp.status === 401) {
-    content.innerHTML = '<div class="error">Authentication failed. Check your token.</div>';
-    throw new Error('401');
-  }
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || resp.statusText);
-  }
-  return resp.json();
-}
 
 function setBreadcrumb(items) {
   breadcrumb.innerHTML = items.map((item, i) =>

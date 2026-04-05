@@ -108,6 +108,27 @@
   </div>
 
   <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+  <script>
+    // Global init — shared by all modules
+    const API = '/api';
+    const _params = new URLSearchParams(window.location.search);
+    const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
+    if (TOKEN) sessionStorage.setItem('ms_token', TOKEN);
+
+    async function apiFetch(path) {
+      const resp = await fetch(API + path, {
+        headers: { 'Authorization': 'Bearer ' + TOKEN }
+      });
+      if (resp.status === 401) {
+        throw new Error('Authentication failed. Check your token.');
+      }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        throw new Error(err.detail || resp.statusText);
+      }
+      return resp.json();
+    }
+  </script>
   <script src="/static/timeseries.js"></script>
   <script src="/static/calendar.js"></script>
   <script src="/static/stream.js"></script>
