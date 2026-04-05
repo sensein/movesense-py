@@ -130,6 +130,26 @@ def create_app(data_dir: Path) -> FastAPI:
                     if raw:
                         current_config = raw.decode("utf-8", errors="ignore").rstrip("\x00")
 
+                # Check memory status
+                is_full = False
+                try:
+                    full_result = await sensor.get_resource("/Mem/Logbook/IsFull")
+                    if full_result.get("success"):
+                        raw = full_result.get("data", b"")
+                        is_full = bool(raw[0]) if raw else False
+                except Exception:
+                    pass
+
+                # Get log entries to estimate used space
+                total_log_size = 0
+                try:
+                    log_list = await sensor.get_log_list()
+                    if log_list.get("success"):
+                        for entry in log_list.get("entries", []):
+                            total_log_size += entry.get("size", 0)
+                except Exception:
+                    pass
+
                 return {
                     "serial": status.get("serial_number", serial),
                     "product_name": status.get("product_name", "Unknown"),
@@ -138,6 +158,8 @@ def create_app(data_dir: Path) -> FastAPI:
                     "datalogger_state": {1: "Unknown", 2: "Ready", 3: "Logging"}.get(status.get("dlstate", 1), "Unknown"),
                     "dlstate": status.get("dlstate", 1),
                     "current_config": current_config,
+                    "memory_full": is_full,
+                    "total_log_size_bytes": total_log_size,
                 }
         except Exception as e:
             raise HTTPException(500, detail=str(e))

@@ -158,23 +158,35 @@ class StreamManager:
             await self._broadcast({"type": "error", "message": f"Stream error: {e}"})
 
     def _parse_payload(self, payload: bytes) -> list:
-        """Parse raw BLE data payload into numeric values."""
+        """Parse BLE subscription data payload using the existing DataView parser.
+
+        Subscription data format (from Movesense GSP protocol):
+        - Bytes 0-3: timestamp (uint32, little-endian)
+        - Bytes 4+: sensor data as array of float32 values
+
+        Uses the same DataView class as the rest of the sensor protocol.
+        """
         import math
-        import struct
+
+        if len(payload) < 8:
+            return []
+
+        dv = DataView(payload)
+
+        # First 4 bytes are the timestamp — skip them
+        data_start = 4
         values = []
-        offset = 0
+        offset = data_start
         while offset + 4 <= len(payload):
             try:
-                val = struct.unpack_from("<f", payload, offset)[0]
-                # Replace NaN/Inf with 0 — these are invalid BLE readings
+                val = dv.get_float_32(offset)
                 if math.isnan(val) or math.isinf(val):
                     val = 0.0
                 values.append(round(val, 6))
                 offset += 4
-            except struct.error:
+            except Exception:
                 break
-        if not values:
-            values = list(payload)
+
         return values
 
     async def _broadcast(self, message: dict) -> None:

@@ -283,9 +283,12 @@
       document.getElementById('device-connected-panel').style.display = '';
 
       // Device info
+      const memInfo = info.memory_full
+        ? '<span style="color:#ef4444">⚠ Memory FULL — logging stopped</span>'
+        : `Storage: ${(info.total_log_size_bytes / 1024).toFixed(0)} KB used`;
       document.getElementById('device-info').innerHTML = `
         <div class="card"><h3>${info.serial}</h3>
-        <div class="meta">${info.product_name} v${info.app_version} | Battery: ${info.battery}% | State: ${info.datalogger_state}</div></div>`;
+        <div class="meta">${info.product_name} v${info.app_version} | Battery: ${info.battery}% | State: ${info.datalogger_state} | ${memInfo}</div></div>`;
 
       // Current config
       const configDisplay = document.getElementById('current-config-display');
