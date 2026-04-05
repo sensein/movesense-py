@@ -15,6 +15,7 @@ dependencies = [
     "scipy>=1.14",
     "neurokit2>=0.2",
     "ruptures>=1.1",
+    "stumpy>=1.12",
     "fastapi>=0.115",
     "uvicorn>=0.34",
     "pyobjc-core>=11.1; sys_platform == 'darwin'",
@@ -28,7 +29,6 @@ ml = [
     "torch>=2.0",
     "scikit-learn>=1.5",
     "hmmlearn>=0.3",
-    "stumpy>=1.12",
     "ahrs>=0.3",
 ]
 dev = [
