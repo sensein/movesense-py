@@ -166,7 +166,6 @@ def create_app(data_dir: Path) -> FastAPI:
                     ("temp", "/Meas/Temp/Info", "/Meas/Temp", "Temperature", "K"),
                 ]
 
-                imu_rates = []
                 for sid, path, template, label, unit in info_probes:
                     try:
                         r = await sensor.get_resource(path)
@@ -182,27 +181,26 @@ def create_app(data_dir: Path) -> FastAPI:
                             if template:
                                 entry["path_template"] = template
                             capabilities[sid] = entry
-                            if sid == "imu":
-                                imu_rates = cap.sample_rates
                         else:
                             capabilities[sid] = {"available": False, "label": label}
                     except Exception:
                         capabilities[sid] = {"available": False, "label": label}
 
-                # IMU6/9 use the same rates from /Meas/IMU/Info
+                # IMU6/9 use ACC rates (same IMU hardware)
+                imu_rates = capabilities.get("acc", {}).get("rates", [])
+                imu_available = capabilities.get("imu", {}).get("available", False) or len(imu_rates) > 0
                 for imu_id, imu_label, imu_template in [
-                    ("imu6", "IMU 6-axis", "/Meas/IMU6/{rate}"),
-                    ("imu6m", "IMU 6-axis (Mag)", "/Meas/IMU6m/{rate}"),
-                    ("imu9", "IMU 9-axis", "/Meas/IMU9/{rate}"),
+                    ("imu6", "IMU 6-axis (Acc+Gyro)", "/Meas/IMU6/{rate}"),
+                    ("imu6m", "IMU 6-axis (Acc+Mag)", "/Meas/IMU6m/{rate}"),
+                    ("imu9", "IMU 9-axis (Acc+Gyro+Mag)", "/Meas/IMU9/{rate}"),
                 ]:
-                    if imu_rates:
-                        capabilities[imu_id] = {
-                            "available": True, "label": imu_label,
-                            "path_template": imu_template,
-                            "rates": imu_rates, "unit": "",
-                        }
-                    else:
-                        capabilities[imu_id] = {"available": False, "label": imu_label}
+                    capabilities[imu_id] = {
+                        "available": imu_available,
+                        "label": imu_label,
+                        "path_template": imu_template,
+                        "rates": imu_rates,
+                        "unit": "m/s²+dps+µT" if "9" in imu_id else "m/s²+dps",
+                    } if imu_available else {"available": False, "label": imu_label}
 
                 # Check memory status
                 is_full = False

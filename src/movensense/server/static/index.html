@@ -372,13 +372,19 @@
 
     // Set checkboxes/rates from device config string
     function setConfigFromDevice(configStr) {
-      const paths = configStr ? configStr.split('\0').filter(p => p && p !== '/Time/Detailed') : [];
+      // Filter to valid measurement paths only (must start with /)
+      const paths = configStr
+        ? configStr.split('\0').filter(p => p && p.startsWith('/') && p !== '/Time/Detailed')
+        : [];
 
-      // Uncheck all first
-      MEASUREMENTS.forEach(m => {
-        const chk = document.getElementById(`cfg-${m.id}`);
-        if (chk) chk.checked = false;
-      });
+      // Don't uncheck defaults from buildConfigFromCapabilities — only uncheck if we have real config
+      if (paths.length > 0) {
+        // Uncheck all first, then set from device
+        MEASUREMENTS.forEach(m => {
+          const chk = document.getElementById(`cfg-${m.id}`);
+          if (chk) chk.checked = false;
+        });
+      }
 
       if (paths.length > 0) {
         // Match device paths to measurement checkboxes
@@ -404,12 +410,8 @@
           }
         }
       } else {
-        // No config on device — select sensible defaults
-        const defaults = ['ecg', 'acc'];
-        defaults.forEach(id => {
-          const chk = document.getElementById(`cfg-${id}`);
-          if (chk) chk.checked = true;
-        });
+        // No valid config from device — keep defaults from buildConfigFromCapabilities
+        // (ECG, IMU9, Temp, HR are checked by default in that function)
       }
 
       originalConfig = getSelectedConfig(); // snapshot current state
