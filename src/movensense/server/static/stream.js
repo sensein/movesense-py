@@ -52,9 +52,10 @@ class StreamClient {
 class ChartManager {
   constructor(containerId) {
     this.container = document.getElementById(containerId);
-    this.charts = {};  // channel → { plot, data, opts }
+    this.charts = {};
     this.windowSeconds = 10;
-    this.maxPoints = {};  // channel → max points for window
+    this.maxPoints = {};
+    this._paused = false;
   }
 
   setWindow(seconds) {
@@ -62,6 +63,7 @@ class ChartManager {
   }
 
   addData(channel, values, samplingRate) {
+    if (this._paused) return;
     if (!this.charts[channel]) {
       this._createChart(channel, samplingRate || 200);
     }

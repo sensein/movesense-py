@@ -58,6 +58,9 @@
     .config-item label { flex: 1; display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
     .config-item select { font-size: 0.8rem; padding: 0.2rem; }
     .config-item.changed { border-color: #f59e0b; background: #fffbeb; }
+    #busy-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; }
+    #busy-overlay.active { display:flex; }
+    #busy-overlay .busy-msg { background:white; padding:2rem 3rem; border-radius:0.75rem; text-align:center; font-size:1rem; }
     .config-diff-add { color: #22c55e; } .config-diff-remove { color: #ef4444; }
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 1rem; }
     .cal-header { text-align: center; font-size: 0.75rem; color: var(--muted); padding: 0.25rem; font-weight: 500; }
@@ -70,6 +73,7 @@
   </style>
 </head>
 <body>
+  <div id="busy-overlay"><div class="busy-msg" id="busy-msg">Working...</div></div>
   <h1>Movensense</h1>
   <div class="tabs">
     <div class="tab active" onclick="switchTab('data')">Data Browser</div>
@@ -155,8 +159,9 @@
       <!-- Live Streaming -->
       <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Live Data Stream</div>
       <div class="stream-controls">
-        <button class="primary" onclick="startStreaming()" id="btn-start" disabled>Start Streaming</button>
-        <button class="danger" onclick="stopStreaming()" id="btn-stop" disabled>Stop Streaming</button>
+        <button class="primary" onclick="startStreaming()" id="btn-start" disabled title="Start streaming">▶</button>
+        <button onclick="pauseStreaming()" id="btn-pause" disabled title="Pause" style="display:none">⏸</button>
+        <button class="danger" onclick="stopStreaming()" id="btn-stop" disabled title="Stop streaming">⏹</button>
         <label>Window:
           <select id="time-window" onchange="setTimeWindow()">
             <option value="5">5s</option>
@@ -466,10 +471,24 @@
       }
     }
 
+    let _busy = false;
+    function showBusy(msg) {
+      _busy = true;
+      document.getElementById('busy-msg').textContent = msg;
+      document.getElementById('busy-overlay').classList.add('active');
+      window.onbeforeunload = () => 'An operation is in progress. Are you sure you want to leave?';
+    }
+    function hideBusy() {
+      _busy = false;
+      document.getElementById('busy-overlay').classList.remove('active');
+      window.onbeforeunload = null;
+    }
+
     async function applyConfig() {
       const diff = getConfigDiff();
       const paths = getSelectedConfig();
       if (!paths.length) { alert('Select at least one measurement'); return; }
+      showBusy('Applying configuration to device...');
       try {
         const resp = await fetch('/api/device/config', {
           method: 'POST',
@@ -485,8 +504,10 @@
         document.getElementById('btn-apply').style.background = '#ccc';
         document.getElementById('btn-apply').style.color = '#666';
         MEASUREMENTS.forEach(m => { const item = document.getElementById(`cfg-item-${m.id}`); if (item) item.classList.remove('changed'); });
+        hideBusy();
         alert('Configuration applied successfully');
       } catch (e) {
+        hideBusy();
         document.getElementById('stream-error').style.display = '';
         document.getElementById('stream-error').textContent = e.message;
       }
@@ -542,21 +563,25 @@
     async function fetchLogs() {
       if (!connectedSerial) return;
       const statusEl = document.getElementById('fetch-status');
-      statusEl.textContent = 'Downloading logs...';
-      document.getElementById('btn-fetch').disabled = true;
+      showBusy('Downloading logs from device... This may take several minutes. Do not close this page.');
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 600000); // 10 min timeout
         const resp = await fetch('/api/device/fetch', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
           body: JSON.stringify({ serial: connectedSerial }),
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
         if (!resp.ok) throw new Error((await resp.json()).detail || 'Fetch failed');
         const result = await resp.json();
-        statusEl.innerHTML = `<span style="color:#22c55e">Downloaded ${result.log_count} log(s) → ${result.output_dir}</span>`;
-        document.getElementById('btn-fetch').disabled = false;
+        hideBusy();
+        statusEl.innerHTML = `<span style="color:#22c55e">✓ Downloaded ${result.log_count} log(s) → ${result.output_dir}</span>`;
       } catch (e) {
-        statusEl.innerHTML = `<span style="color:#ef4444">${e.message}</span>`;
-        document.getElementById('btn-fetch').disabled = false;
+        hideBusy();
+        const msg = e.name === 'AbortError' ? 'Download timed out (10 min limit)' : e.message;
+        statusEl.innerHTML = `<span style="color:#ef4444">✗ ${msg}</span>`;
       }
     }
 
@@ -566,8 +591,7 @@
       if (confirmed !== 'erase') { alert('Erase cancelled'); return; }
 
       const statusEl = document.getElementById('fetch-status');
-      statusEl.textContent = 'Erasing memory...';
-      document.getElementById('btn-erase').disabled = true;
+      showBusy('Erasing device memory...');
       try {
         const resp = await fetch('/api/device/erase', {
           method: 'POST',
@@ -575,11 +599,11 @@
           body: JSON.stringify({ serial: connectedSerial }),
         });
         if (!resp.ok) throw new Error((await resp.json()).detail || 'Erase failed');
-        statusEl.innerHTML = '<span style="color:#22c55e">Memory erased successfully</span>';
-        document.getElementById('btn-erase').disabled = false;
+        hideBusy();
+        statusEl.innerHTML = '<span style="color:#22c55e">✓ Memory erased successfully</span>';
       } catch (e) {
-        statusEl.innerHTML = `<span style="color:#ef4444">${e.message}</span>`;
-        document.getElementById('btn-erase').disabled = false;
+        hideBusy();
+        statusEl.innerHTML = `<span style="color:#ef4444">✗ ${e.message}</span>`;
       }
     }
 
@@ -589,11 +613,27 @@
       chartManager.clear();
       document.getElementById('stream-error').style.display = 'none';
       streamClient.startStream(connectedSerial, channels);
+      document.getElementById('btn-start').disabled = true;
+      document.getElementById('btn-pause').disabled = false;
+      document.getElementById('btn-pause').style.display = '';
       document.getElementById('btn-stop').disabled = false;
+    }
+
+    let _streamPaused = false;
+    function pauseStreaming() {
+      _streamPaused = !_streamPaused;
+      document.getElementById('btn-pause').textContent = _streamPaused ? '▶' : '⏸';
+      document.getElementById('btn-pause').title = _streamPaused ? 'Resume' : 'Pause';
+      // Pause just stops chart updates, WS stays connected
+      if (chartManager) chartManager._paused = _streamPaused;
     }
 
     function stopStreaming() {
       if (streamClient) streamClient.stopStream();
+      _streamPaused = false;
+      document.getElementById('btn-start').disabled = false;
+      document.getElementById('btn-pause').disabled = true;
+      document.getElementById('btn-pause').style.display = 'none';
       document.getElementById('btn-stop').disabled = true;
     }
 
