@@ -137,16 +137,36 @@ def parse_subscription_packet(payload: bytes, channel_path: str) -> ParsedPacket
     if fmt is None:
         return _parse_generic(payload, channel_path)
 
-    # Extract timestamp (first 4 bytes, uint32 LE)
+    result = ParsedPacket(channel=channel_path, unit=fmt.unit, axes=fmt.axes)
+
+    # Temp: no timestamp prefix — just float Measurement directly
+    if "temp" in channel_path.lower():
+        if len(payload) >= 4:
+            val = struct.unpack_from("<f", payload, 0)[0]
+            if not (math.isnan(val) or math.isinf(val)):
+                result.values = [round(val, 7)]
+        return result
+
+    # HR: float average + uint16[] rrData (no timestamp prefix)
+    if "/hr" in channel_path.lower():
+        if len(payload) >= 4:
+            avg = struct.unpack_from("<f", payload, 0)[0]
+            if not (math.isnan(avg) or math.isinf(avg)) and 0 < avg < 300:
+                rr_values = []
+                offset = 4
+                while offset + 2 <= len(payload):
+                    rr = struct.unpack_from("<H", payload, offset)[0]
+                    if 200 <= rr <= 3000:  # plausible RR interval
+                        rr_values.append(rr)
+                    offset += 2
+                result.values = [round(avg, 1)]  # HR in bpm
+                result.timestamp_ms = 0
+        return result
+
+    # All other sensors: 4-byte timestamp prefix
     timestamp = struct.unpack_from("<I", payload, 0)[0]
     data = payload[4:]
-
-    result = ParsedPacket(
-        timestamp_ms=timestamp,
-        channel=channel_path,
-        unit=fmt.unit,
-        axes=fmt.axes,
-    )
+    result.timestamp_ms = timestamp
 
     if fmt.sample_type == "int16":
         # ECG mV: int16 samples with scale factor
@@ -180,7 +200,7 @@ def parse_subscription_packet(payload: bytes, channel_path: str) -> ParsedPacket
             x = struct.unpack_from("<f", data, i)[0]
             y = struct.unpack_from("<f", data, i + 4)[0]
             z = struct.unpack_from("<f", data, i + 8)[0]
-            values.append([round(x, 4), round(y, 4), round(z, 4)])
+            values.append([round(x, 7), round(y, 7), round(z, 7)])
         result.values = values
 
     elif fmt.axes == 6:
@@ -199,8 +219,8 @@ def parse_subscription_packet(payload: bytes, channel_path: str) -> ParsedPacket
             gx = struct.unpack_from("<f", gyro_data, s * 12)[0]
             gy = struct.unpack_from("<f", gyro_data, s * 12 + 4)[0]
             gz = struct.unpack_from("<f", gyro_data, s * 12 + 8)[0]
-            values.append([round(ax, 4), round(ay, 4), round(az, 4),
-                           round(gx, 4), round(gy, 4), round(gz, 4)])
+            values.append([round(ax, 7), round(ay, 7), round(az, 7),
+                           round(gx, 7), round(gy, 7), round(gz, 7)])
         result.values = values
 
     elif fmt.axes == 9:
@@ -217,7 +237,7 @@ def parse_subscription_packet(payload: bytes, channel_path: str) -> ParsedPacket
                 x = struct.unpack_from("<f", chunk, s * 12)[0]
                 y = struct.unpack_from("<f", chunk, s * 12 + 4)[0]
                 z = struct.unpack_from("<f", chunk, s * 12 + 8)[0]
-                row.extend([round(x, 4), round(y, 4), round(z, 4)])
+                row.extend([round(x, 7), round(y, 7), round(z, 7)])
             values.append(row)
         result.values = values
 
