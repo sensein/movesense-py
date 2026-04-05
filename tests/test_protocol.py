@@ -80,11 +80,10 @@ class TestParseECG:
         assert all(abs(v) < 1.0 for v in result.values)
 
     def test_ecg_scale_factor(self):
-        # Single sample: raw int16 = 1000
+        # ECG /mV: int16 × 0.001 = millivolts (verified against sbem2json)
         pkt = struct.pack("<I", 0) + struct.pack("<h", 1000)
         result = parse_subscription_packet(pkt, "/Meas/Ecg/200/mV")
-        expected = round(1000 * 0.000381469726563, 6)
-        assert abs(result.values[0] - expected) < 1e-5
+        assert abs(result.values[0] - 1.0) < 1e-10  # 1000 × 0.001 = 1.0 mV
 
     def test_ecg_negative_values(self):
         pkt = _make_ecg_packet(values=[-500, -1000, 500, 1000])

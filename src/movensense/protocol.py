@@ -39,9 +39,11 @@ SENSOR_FORMATS = {
         samples_per_packet=16, unit="LSB", scale_factor=1.0,
     ),
     # ECG mV: YAML says float but wire sends int16. We handle both.
+    # ECG mV: int16 values in millivolts × 1000 (scale = 0.001)
+    # Verified: int16 -18 × 0.001 = -0.018 matches sbem2json output exactly
     "ecg_mv": SensorFormat(
         name="ECG (mV)", path_prefix="/Meas/Ecg", sample_type="int16",
-        samples_per_packet=16, unit="mV", scale_factor=0.000381469726563,
+        samples_per_packet=16, unit="mV", scale_factor=0.001,
     ),
     # Accelerometer: FloatVector3D array
     "acc": SensorFormat(
