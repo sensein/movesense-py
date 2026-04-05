@@ -107,7 +107,7 @@ def create_app(data_dir: Path) -> FastAPI:
         )
         return {"status": "refreshed", "devices": len(scanner.devices), "sessions": total_sessions}
 
-    @app.post("/api/devices/{serial}/dates/{date}/sessions/{log_id}/window-stats")
+    @app.get("/api/devices/{serial}/dates/{date}/sessions/{log_id}/window-stats")
     async def window_stats(
         serial: str, date: str, log_id: int,
         start: float = Query(0, ge=0),

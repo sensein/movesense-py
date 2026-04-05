@@ -170,7 +170,7 @@ class TestRefreshEndpoint:
 
 class TestWindowStatsEndpoint:
     def test_window_stats(self, client, auth_headers):
-        resp = client.post(
+        resp = client.get(
             "/api/devices/000000000000/dates/2026-04-04/sessions/1/window-stats?start=0",
             headers=auth_headers,
         )
@@ -184,14 +184,14 @@ class TestWindowStatsEndpoint:
         assert "mean" in ecg
 
     def test_window_stats_with_range(self, client, auth_headers):
-        resp = client.post(
+        resp = client.get(
             "/api/devices/000000000000/dates/2026-04-04/sessions/1/window-stats?start=0&end=1.0",
             headers=auth_headers,
         )
         assert resp.status_code == 200
 
     def test_window_stats_404(self, client, auth_headers):
-        resp = client.post(
+        resp = client.get(
             "/api/devices/NONEXISTENT/dates/2026-04-04/sessions/1/window-stats",
             headers=auth_headers,
         )
