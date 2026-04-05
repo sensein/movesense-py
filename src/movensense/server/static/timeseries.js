@@ -1,21 +1,19 @@
 // Multi-scale synchronized time series viewer using uPlot
 class TimeSeriesViewer {
-  constructor(containerId, apiFetch) {
+  constructor(containerId) {
     this.container = document.getElementById(containerId);
-    this.apiFetch = apiFetch;
-    this.plots = [];     // uPlot instances
-    this.channels = [];  // channel metadata
-    this.session = null; // {serial, date, logId}
-    this.viewRange = null; // [startSec, endSec] or null for full
+    this.plots = [];
+    this.channels = [];
+    this.session = null;
+    this.viewRange = null;
     this._syncing = false;
   }
 
   async load(serial, date, logId) {
     this.session = { serial, date, logId };
-    this.container.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--muted)">Loading channels...</div>';
-
+    this.container.innerHTML = '<div style="text-align:center;padding:2rem;color:#999">Loading channels...</div>';
     try {
-      const meta = await this.apiFetch(`/devices/${serial}/dates/${date}/sessions/${logId}/channels`);
+      const meta = await apiFetch(`/devices/${serial}/dates/${date}/sessions/${logId}/channels`);
       this.channels = meta.channels;
       this.viewRange = null;
       await this._renderAll();
@@ -28,23 +26,21 @@ class TimeSeriesViewer {
     this.container.innerHTML = '';
     this.plots = [];
 
-    // Controls
     const controls = document.createElement('div');
     controls.className = 'stream-controls';
     controls.innerHTML = `
-      <button onclick="tsViewer.resetZoom()">Reset Zoom</button>
-      <span style="font-size:0.8rem;color:var(--muted)" id="ts-range-label">Full recording</span>
+      <button onclick="window.tsViewer.resetZoom()">Reset Zoom</button>
+      <span style="font-size:0.8rem;color:#999" id="ts-range-label">Full recording</span>
     `;
     this.container.appendChild(controls);
 
-    // Create a chart for each channel
     for (const ch of this.channels) {
       const wrapper = document.createElement('div');
       wrapper.className = 'chart-wrapper';
       wrapper.style.marginBottom = '0.5rem';
 
       const label = document.createElement('div');
-      label.style.cssText = 'font-size:0.8rem;color:var(--muted);display:flex;justify-content:space-between;';
+      label.style.cssText = 'font-size:0.8rem;color:#666;display:flex;justify-content:space-between;';
       label.innerHTML = `<span><strong>${ch.name}</strong> ${ch.sensor_type || ''}</span><span>${ch.sampling_rate_hz || '?'}Hz | ${ch.sample_count} samples</span>`;
       wrapper.appendChild(label);
 
@@ -54,13 +50,12 @@ class TimeSeriesViewer {
 
       const valueLabel = document.createElement('div');
       valueLabel.id = `ts-val-${ch.name}`;
-      valueLabel.style.cssText = 'font-size:0.75rem;color:var(--muted);height:1rem;';
+      valueLabel.style.cssText = 'font-size:0.75rem;color:#999;height:1.2rem;';
       wrapper.appendChild(valueLabel);
 
       this.container.appendChild(wrapper);
     }
 
-    // Load data for all channels
     await this._loadData();
   }
 
@@ -73,7 +68,14 @@ class TimeSeriesViewer {
       if (!el) continue;
 
       const width = el.parentElement.clientWidth || 800;
-      const buckets = Math.min(width * 2, 2000); // 2 points per pixel
+      // Request enough buckets for full resolution when zoomed in
+      let buckets = Math.min(width * 2, 2000);
+      if (this.viewRange && ch.sampling_rate_hz) {
+        const visibleDuration = this.viewRange[1] - this.viewRange[0];
+        const nativeSamples = Math.ceil(visibleDuration * ch.sampling_rate_hz);
+        // If native samples fit in 10K, request raw resolution
+        buckets = Math.min(nativeSamples, 10000);
+      }
 
       let url = `/devices/${serial}/dates/${date}/sessions/${logId}/channels/${ch.name}/downsample?buckets=${buckets}`;
       if (this.viewRange) {
@@ -81,49 +83,74 @@ class TimeSeriesViewer {
       }
 
       try {
-        const ds = await this.apiFetch(url);
-        this._createChart(el, ch, ds, i);
+        const ds = await apiFetch(url);
+        this._createChart(el, ch, ds);
       } catch (e) {
         el.innerHTML = `<div class="error">${e.message}</div>`;
       }
     }
   }
 
-  _createChart(el, ch, ds, index) {
+  _createChart(el, ch, ds) {
     el.innerHTML = '';
     const width = el.parentElement.clientWidth || 800;
-    const height = 150;
+    const height = 160;
     const data = ds.data;
 
-    let series = [{ label: 'Time' }];
-    let plotData = [data.time];
+    if (!data || !data.time || data.time.length === 0) {
+      el.innerHTML = '<div style="padding:1rem;color:#999">No data</div>';
+      return;
+    }
+
+    const timeArr = data.time;
+    let series = [{}]; // first series = x axis (no label needed)
+    let plotData = [timeArr];
 
     if (data.values) {
       // Raw data mode
       if (Array.isArray(data.values[0])) {
-        // Multi-axis raw
-        const cols = ds.columns || ['x', 'y', 'z'];
-        for (let c = 0; c < cols.length; c++) {
-          series.push({ label: cols[c], stroke: ['#ef4444', '#22c55e', '#3b82f6'][c] || '#888' });
-          plotData.push(data.values.map(r => r[c]));
+        // Multi-axis raw: values = [[x,y,z], [x,y,z], ...]
+        const nAxes = data.values[0].length;
+        const colors = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4'];
+        const labels = (ds.columns || ['x','y','z','a','b','c']).slice(0, nAxes);
+        for (let a = 0; a < nAxes; a++) {
+          series.push({ label: labels[a], stroke: colors[a] || '#888', width: 1 });
+          plotData.push(data.values.map(row => row[a]));
         }
       } else {
-        series.push({ label: ch.name, stroke: '#2563eb' });
+        // 1D raw
+        series.push({ label: ch.name, stroke: '#2563eb', width: 1 });
         plotData.push(data.values);
       }
-    } else if (data.min) {
-      // Downsampled 1D — show as min/max band + mean line
+    } else if (ds.columns) {
+      // Downsampled multi-axis: per-column mean arrays
+      const colors = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4'];
+      for (let c = 0; c < ds.columns.length; c++) {
+        const col = ds.columns[c];
+        const meanKey = `${col}_mean`;
+        if (data[meanKey]) {
+          series.push({ label: col, stroke: colors[c] || '#888', width: 1 });
+          plotData.push(data[meanKey]);
+        }
+      }
+    } else if (data.mean) {
+      // Downsampled 1D
       series.push({ label: 'mean', stroke: '#2563eb', width: 1 });
       plotData.push(data.mean);
-      // We could show min/max as a band but uPlot doesn't have native bands,
-      // so show mean only for now (future: custom drawing)
-    } else if (ds.columns) {
-      // Downsampled multi-axis — show means
-      const cols = ds.columns;
-      for (const col of cols) {
-        series.push({ label: col, stroke: col === 'x' ? '#ef4444' : col === 'y' ? '#22c55e' : '#3b82f6' });
-        plotData.push(data[`${col}_mean`]);
+    }
+
+    // Validate: all arrays must be same length
+    const len = plotData[0].length;
+    for (let s = 1; s < plotData.length; s++) {
+      if (!plotData[s] || plotData[s].length !== len) {
+        el.innerHTML = '<div style="padding:1rem;color:#999">Data length mismatch</div>';
+        return;
       }
+    }
+
+    if (plotData.length < 2) {
+      el.innerHTML = '<div style="padding:1rem;color:#999">No plottable data</div>';
+      return;
     }
 
     const self = this;
@@ -133,17 +160,19 @@ class TimeSeriesViewer {
       series,
       scales: { x: { time: false } },
       axes: [
-        { label: 'Time (s)', size: 40 },
-        { label: ch.unit || '', size: 50 },
+        { stroke: '#333', grid: { stroke: '#eee' }, size: 40 },
+        { stroke: '#333', grid: { stroke: '#eee' }, size: 55, label: ch.unit || '' },
       ],
       cursor: {
-        lock: true,
-        sync: { key: 'timeseries-sync', setSeries: false },
+        sync: { key: 'ts-sync', setSeries: false },
+        drag: { x: true, y: false, setScale: false },
       },
+      select: { show: true },
       hooks: {
         setSelect: [
           (u) => {
             if (self._syncing) return;
+            if (u.select.width < 5) return; // ignore tiny drags
             const left = u.posToVal(u.select.left, 'x');
             const right = u.posToVal(u.select.left + u.select.width, 'x');
             if (right - left > 0.001) {
@@ -158,20 +187,13 @@ class TimeSeriesViewer {
     };
 
     if (typeof uPlot !== 'undefined') {
-      const plot = new uPlot(opts, plotData, el);
-      this.plots.push(plot);
-
-      // Crosshair value display
-      plot.over.addEventListener('mousemove', (e) => {
-        const valEl = document.getElementById(`ts-val-${ch.name}`);
-        if (!valEl) return;
-        const idx = plot.cursor.idx;
-        if (idx != null && plotData[1] && plotData[1][idx] != null) {
-          const t = plotData[0][idx].toFixed(3);
-          const v = plotData[1][idx].toFixed(4);
-          valEl.textContent = `t=${t}s  value=${v}`;
-        }
-      });
+      try {
+        const plot = new uPlot(opts, plotData, el);
+        this.plots.push(plot);
+      } catch (e) {
+        console.error(`Chart error for ${ch.name}:`, e);
+        el.innerHTML = `<div style="padding:1rem;color:#c00">Chart error: ${e.message}</div>`;
+      }
     }
   }
 
