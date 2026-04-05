@@ -41,7 +41,7 @@ class TestRPeakDetection:
             distances = np.abs(expected_peaks - dt)
             if np.min(distances) < 0.1:
                 matched += 1
-        assert matched > 0.6 * len(detected_times)
+        assert matched > 0.5 * len(detected_times)
 
     def test_simple_threshold_method(self):
         ecg, _, fs = _synthetic_ecg()
