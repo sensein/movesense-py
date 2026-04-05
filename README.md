@@ -1,255 +1,163 @@
-# Python Datalogger Tool
+# Movensense
 
-A Python command-line interface (CLI) tool for managing BLE (Bluetooth Low Energy) datalogger devices using the GSP (GATT SensorData Protocol). This tool allows you to configure, control, and retrieve data from compatible sensor devices.
-
-# ECG GUI tool
-
-A graphical user interface (GUI) application for recording and retrieving ECG data from Movesense sensors. This tool simplifies the process of logging ECG sensor data, dowloading it, and converting it to multiple formats for analysis.
+Python toolkit for Movesense BLE sensor devices — data collection, real-time streaming, visualization, and physics-based signal analysis.
 
 ## Features
 
-- **Device Status**: Check connection and get device information
-- **Configuration**: Set up logging paths and parameters (Only Python Datalogger tool. ECG GUI tool is configured for ECG recordings at 200 Hz with mV units.)
-- **Logging Control**: Start and stop data logging
-- **Data Retrieval**: Fetch logged data files from devices
-- **Memory Management**: Clear device memory when needed
-- **Multi-device Support**: Handle multiple sensors simultaneously (Only Python Datalogger tool)
-- **Cross-platform**: Works on macOS, Windows, and Linux
-
-## Requirements
-
-- Python 3.7+
-- Bluetooth Low Energy (BLE) capable device
-- Compatible Movesense sensor(s)
+- **CLI** (`movensense`): Device management, data collection, Zarr v3 storage
+- **Data Server** (`movensense serve`): REST API + browser UI for browsing collected data
+- **Live Streaming**: WebSocket-based real-time sensor data with browser charts
+- **Calendar View**: Monthly data coverage with color-coded days
+- **Multi-Scale Time Series**: Synchronized zoom/pan across channels with downsampling
+- **Physio Library**: Physics-based and ML signal processing algorithms
+- **Event Labeling**: Automatic and manual annotation of physiological events
 
 ## Installation
 
-1. Clone this repository:
 ```bash
-git clone <repository-url>
-cd python-datalogger-tool
+# Core (BLE + data collection + server)
+uv pip install -e .
+
+# With ML models (PyTorch, scikit-learn)
+uv pip install -e ".[ml]"
+
+# Development
+uv pip install -e ".[dev,ml]"
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
+Requires Python 3.11+ and a BLE-capable machine. Set your device serial in `.env`:
+
+```
+MSN=254830002158
 ```
 
-## Usage : Datalogger tool
-
-This command line tool provides several commands to interact with datalogger devices. All commands require specifying device serial numbers (or their last few digits) using the `-s` flag.
-
-## Usage : ECG GUI tool
-
-This graphical user interface tool provides a simplified workflow for ECG data logging. All operations require entering the device serial number in the GUI.
-
-### ECG GUI Quick start
-   Follow the numbered steps (1-5) in the interface:
-      - **Step 1:** Enter your sensor's serial number
-      - **Step 2:** Connect to verify device status
-      - **Step 3:** Start logging
-      - **Step 4:** Stop logging when done
-      - **Step 5:** Load data (downloads and converts automatically)
-   Click "Erase Memory" to clear all logged data from sensor
-
-   **Note:** This GUI version is specifically configured for ECG recordings at 200 Hz with mV units.
-
-### Basic Command Structure
+## Quick Start
 
 ```bash
-python datalogger_tool.py [command] -s [serial_numbers] [options]
+# Check device status (reads MSN from .env)
+movensense status
+
+# Configure and start logging (no channel limit)
+movensense config /Meas/Ecg/200/mV /Meas/Acc/52 /Meas/Gyro/52 /Meas/Temp /Meas/HR
+movensense start
+
+# Stream live data while logging
+movensense live /Meas/Ecg/200/mV -d 30
+
+# Stop and fetch data → Zarr v3 + CSV
+movensense stop
+movensense fetch
+
+# Start the data server (API + browser UI)
+movensense serve
 ```
 
-### Available Commands
+Data is saved to `~/dbp/data/movesense/{serial}/{date}/`.
 
-#### 1. Check Device Status
+## CLI Commands
 
-Check if devices are connected and get basic information:
+| Command | Description |
+|---------|-------------|
+| `status` | Device info, battery, datalogger state |
+| `config <paths...>` | Configure measurement channels |
+| `start` | Start logging to flash |
+| `stop` | Stop logging, reboot device |
+| `fetch` | Download data → SBEM → JSON → Zarr v3 + CSV |
+| `live <paths...>` | Real-time BLE data streaming |
+| `erase` | Erase device memory (with confirmation) |
+| `serve` | Start data server (API + browser UI) |
+
+All commands accept `-s <serial>` or read `MSN` from `.env`. Use `-V` for verbose logging.
+
+## Data Server
 
 ```bash
-python datalogger_tool.py status -s 000455 000456
+movensense serve [--port 8585] [--host 127.0.0.1]
 ```
 
-Output includes:
-- Protocol version
-- Serial number
-- Product and app information
-- Current datalogger state (Ready/Logging/Unknown)
+Opens at `http://127.0.0.1:8585` with token authentication. Features:
 
-#### 2. Configure Device
+- **Data Browser**: Navigate devices → dates → sessions → channels
+- **Calendar**: Monthly view with data coverage color-coding (green ≥8h, yellow partial)
+- **Time Series**: Synchronized multi-channel charts with zoom/pan and downsampling
+- **Live Stream**: Real-time uPlot charts via WebSocket during active recording
 
-Set up logging configuration with resource paths:
+API docs at `/docs` (auto-generated by FastAPI).
+
+## Physio Library
+
+Reusable signal processing algorithms at `src/movensense/physio/`. Designed to be portable to [senselab](https://github.com/sensein/senselab).
+
+### Classical Algorithms
+
+| Module | Capabilities |
+|--------|-------------|
+| `dsp.py` | Bandpass/lowpass/highpass filters, envelope, peak detection, zero-crossing, RMS, PSD |
+| `ecg.py` | R-peak detection (Pan-Tompkins, Elgendi, Hamilton, ensemble), bSQI, HRV (SDNN, RMSSD, pNN50) |
+| `motion.py` | Activity/rest classification, posture change, motion artifact detection |
+| `quality.py` | ECG signal quality index |
+| `orientation.py` | Madgwick filter (ACC+GYRO → quaternion), posture estimation |
+| `segmentation.py` | PELT change-point detection, multi-stream segmentation, Matrix Profile motifs |
+| `pipeline.py` | Multi-stream analysis orchestrator |
+| `events.py` | Event model with JSON persistence and CSV export |
+
+### Learned Models (PyTorch, MPS/CUDA/CPU)
+
+| Module | Models |
+|--------|--------|
+| `learned/ssm.py` | S4 layer, BioSSM (bidirectional state-space model) |
+| `learned/causal.py` | Granger causality, cross-channel discovery, transfer entropy |
+| `learned/multimodal.py` | Multi-scale ChannelEncoder, CrossModalAttention, MultiModalFusion |
+| `learned/pinn.py` | PirateNet (adaptive residual PINN), PhysicsGRU (constrained dynamics), ResidualAttention |
+| `learned/symbolic.py` | KAN layer (B-spline edges), PhysicsKAN (equation discovery) |
+
+See [docs/sota-physio-ml.md](docs/sota-physio-ml.md) for research references and cross-domain applications.
+
+## Project Structure
+
+```
+src/movensense/
+├── cli.py                 # Click CLI entry point
+├── sensor.py              # BLE protocol (GSP over GATT)
+├── json2zarr.py           # JSON → Zarr v3 conversion
+├── json2csv.py            # JSON → CSV conversion
+├── csv2edf.py             # CSV → EDF+ conversion (optional)
+├── server/
+│   ├── app.py             # FastAPI server + WebSocket
+│   ├── auth.py            # Token authentication
+│   ├── scanner.py         # Data directory indexing
+│   ├── stream.py          # BLE → WebSocket bridge
+│   └── static/            # Browser UI (HTML/JS/CSS)
+└── physio/
+    ├── dsp.py             # Standard DSP functions
+    ├── ecg.py             # ECG processing
+    ├── motion.py          # Motion analysis
+    ├── quality.py         # Signal quality
+    ├── orientation.py     # IMU orientation
+    ├── segmentation.py    # Change-point detection
+    ├── pipeline.py        # Multi-stream orchestrator
+    ├── events.py          # Event model
+    └── learned/           # PyTorch models
+        ├── ssm.py         # State-space models
+        ├── causal.py      # Causal discovery
+        ├── multimodal.py  # Cross-modal fusion
+        ├── pinn.py        # Physics-informed NNs
+        └── symbolic.py    # KAN / equation discovery
+```
+
+## Testing
 
 ```bash
-python datalogger_tool.py config -s 000455 -p "/Meas/Temp" "/Meas/ECG/125/mV"
+python -m pytest tests/ -v
 ```
 
-- `-p, --path`: Resource paths to add to configuration. separate multiple paths with space.
-- Automatically adds `/Time/Detailed` to configuration
+151 tests covering CLI, Zarr conversion, server API, scanner, WebSocket, ECG processing, motion analysis, events, segmentation, and all learned models.
 
-#### 3. Start Logging
+## Documentation
 
-Begin data logging on devices:
-
-```bash
-python datalogger_tool.py start -s 000455 000456
-```
-
-#### 4. Stop Logging
-
-Stop data logging on devices:
-
-```bash
-python datalogger_tool.py stop -s 000455 000456
-```
-
-#### 5. Fetch Data
-
-Retrieve logged data from devices:
-
-```bash
-python datalogger_tool.py fetch -s 000455 -o /path/to/output/directory
-```
-
-- `-o, --output`: Output directory for downloaded files
-- Files are saved as `log_{serial}_{log_id}.sbem`
-- Automatically fetches all available logs from each device
-
-#### 6. Erase Memory
-
-Clear all logged data from device memory:
-
-```bash
-python datalogger_tool.py erasemem -s 000455 --force
-```
-
-- `--force`: Skip confirmation prompt (use with caution!). If --force is not given, asks for confirmation
-- ⚠️ **Warning**: This permanently deletes all logged data
-
-### Global Options
-
-- `-V, --verbose`: Enable verbose logging for debugging
-- `-s, --serial_numbers`: List of device serial numbers (or their last few digits)
-
-### Example Workflows
-
-#### Complete Logging Session
-
-```bash
-# 1. Check device status
-python datalogger_tool.py status -s 000455
-
-# 2. Configure logging paths
-python datalogger_tool.py config -s 000455 -p "/Meas/Temp" "/Meas/Acc/13"
-
-# 3. Start logging
-python datalogger_tool.py start -s 000455
-
-# 4. (Let device collect data...)
-
-# 5. Stop logging
-python datalogger_tool.py stop -s 000455
-
-# 6. Fetch data
-python datalogger_tool.py fetch -s 000455 -o ./data
-
-# 7. Optional: Clear memory for next session
-python datalogger_tool.py erasemem -s 000455 --force
-```
-
-#### Multiple Device Management
-
-```bash
-# Configure multiple devices at once
-python datalogger_tool.py config -s 000455 000456 000457 -p "/Meas/Temp"
-
-# Start logging on all devices
-python datalogger_tool.py start -s 000455 000456 000457
-
-# Fetch data from all devices
-python datalogger_tool.py fetch -s 000455 000456 000457 -o ./data
-```
-
-## Device Discovery
-
-The tool connects to devices using the last part of their serial number. Devices must be:
-- Powered on and in range
-- Advertising the GSP service UUID: `34802252-7185-4d5d-b431-630e7050e8f0`
-- Not connected to other applications
-
-## Error Handling
-
-The tool includes automatic retry logic:
-- **Status command**: No retries (quick check)
-- **Other commands**: Up to 10 retry attempts with 5-second delays
-- Failed devices are automatically retried until success or max attempts reached
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"No devices found"**
-   - Ensure devices are powered on and in Bluetooth range
-   - Check that devices are not connected to other applications
-   - Verify serial numbers are correct
-
-2. **Connection timeouts**
-   - Move closer to devices
-   - Ensure Bluetooth is enabled on your computer
-   - Try restarting Bluetooth service
-
-3. **Permission errors on macOS/Linux**
-   - May need to run with `sudo` for Bluetooth access
-   - Or add your user to appropriate Bluetooth groups
-
-### Verbose Logging
-
-Enable detailed logging for debugging:
-
-```bash
-python datalogger_tool.py -V status -s 000455
-```
-
-## Development
-
-### Running Tests
-
-```bash
-python -m pytest test_datalogger_tool.py -v
-```
-
-### Project Structure
-
-```
-├── datalogger_tool.py      # Main CLI interface
-├── sensor_command.py       # BLE communication and GSP protocol
-├── test_datalogger_tool.py # Unit tests with mocked BLE
-├── requirements.txt        # Python dependencies
-└── README.md               # This file
-```
-
-## Protocol Details
-
-This tool implements the GSP (GATT SensorData Protocol) with the following characteristics:
-- **Service UUID**: `34802252-7185-4d5d-b431-630e7050e8f0`
-- **Write Characteristic**: `34800001-7185-4d5d-b431-630e7050e8f0`
-- **Notify Characteristic**: `34800002-7185-4d5d-b431-630e7050e8f0`
+- [Movesense API Reference](docs/movesense-api.md) — Device REST API, measurement paths, protocol details
+- [SOTA Physics-Based ML](docs/sota-physio-ml.md) — Research references, model architectures, cross-domain applications
 
 ## License
 
-[Add your license information here]
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-## Support
-
-For issues and questions:
-- Check the troubleshooting section above
-- Review existing issues in the repository
-- Create a new issue with detailed information about your problem
+Original Movesense Python datalogger tool by Movesense/Suunto. New code in this fork is under development. See upstream: https://bitbucket.org/movesense/python-datalogger-tool
