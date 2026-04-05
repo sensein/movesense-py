@@ -423,7 +423,7 @@
     }
 
     async function stopLogging() {
-      if (!confirm('Stop active recording? Data already written to flash is preserved.')) return;
+      if (!confirm('⚠ Stop active recording?\n\nThis will introduce a gap in the data. Previously recorded data is preserved on the device.\n\nContinue?')) return;
       try {
         const resp = await fetch('/api/device/stop', {
           method: 'POST',
