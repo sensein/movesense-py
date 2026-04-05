@@ -152,6 +152,34 @@ def create_app(data_dir: Path) -> FastAPI:
                 except Exception:
                     log.warning("Could not read device config (device may be logging)")
 
+                # Probe device capabilities — what measurements and rates it supports
+                capabilities = {}
+                info_paths = [
+                    ("ecg", "/Meas/ECG/Info"),
+                    ("acc", "/Meas/Acc/Info"),
+                    ("gyro", "/Meas/Gyro/Info"),
+                    ("magn", "/Meas/Magn/Info"),
+                    ("hr", "/Meas/HR/Info"),
+                    ("temp", "/Meas/Temp/Info"),
+                ]
+                for cap_name, cap_path in info_paths:
+                    try:
+                        r = await sensor.get_resource(cap_path)
+                        if r.get("success"):
+                            capabilities[cap_name] = {"available": True, "raw": r.get("data", b"").hex()}
+                        else:
+                            capabilities[cap_name] = {"available": False}
+                    except Exception:
+                        capabilities[cap_name] = {"available": False}
+
+                # Also check IMU availability
+                for imu in ["IMU6", "IMU9"]:
+                    try:
+                        r = await sensor.get_resource(f"/Meas/{imu}/Info")
+                        capabilities[imu.lower()] = {"available": r.get("success", False)}
+                    except Exception:
+                        capabilities[imu.lower()] = {"available": False}
+
                 # Check memory status
                 is_full = False
                 try:
@@ -180,6 +208,7 @@ def create_app(data_dir: Path) -> FastAPI:
                     "datalogger_state": {1: "Unknown", 2: "Ready", 3: "Logging"}.get(status.get("dlstate", 1), "Unknown"),
                     "dlstate": status.get("dlstate", 1),
                     "current_config": current_config,
+                    "capabilities": capabilities,
                     "memory_full": is_full,
                     "total_log_size_bytes": total_log_size,
                 }
