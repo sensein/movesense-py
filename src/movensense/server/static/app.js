@@ -86,6 +86,8 @@ async function showSessions(serial, date) {
   } catch (e) { content.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
+let tsViewer = null;
+
 async function showChannels(serial, date, logId) {
   subtitle.textContent = `Log ${logId}`;
   setBreadcrumb([
@@ -94,6 +96,18 @@ async function showChannels(serial, date, logId) {
     { label: date, action: `showSessions('${serial}', '${date}')` },
     { label: `Log ${logId}` }
   ]);
+
+  // Show time series viewer + channel table
+  content.innerHTML = '<div id="ts-viewer"></div><hr style="margin:1.5rem 0;border-color:var(--border)"><div id="channel-table"></div>';
+
+  // Load synchronized time series viewer
+  if (typeof TimeSeriesViewer !== 'undefined') {
+    tsViewer = new TimeSeriesViewer('ts-viewer', apiFetch);
+    window.tsViewer = tsViewer;
+    tsViewer.load(serial, date, logId);
+  }
+
+  // Also show channel metadata table
   try {
     const data = await apiFetch(`/devices/${serial}/dates/${date}/sessions/${logId}/channels`);
     let html = '<table><thead><tr><th>Channel</th><th>Type</th><th>Rate</th><th>Unit</th><th>Samples</th><th>Shape</th></tr></thead><tbody>';
@@ -108,8 +122,9 @@ async function showChannels(serial, date, logId) {
       </tr>`;
     }
     html += '</tbody></table>';
-    content.innerHTML = html;
-  } catch (e) { content.innerHTML = `<div class="error">${e.message}</div>`; }
+    const tableEl = document.getElementById('channel-table');
+    if (tableEl) tableEl.innerHTML = html;
+  } catch (e) {}
 }
 
 async function showChannelData(serial, date, logId, channel) {

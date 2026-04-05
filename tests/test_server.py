@@ -168,6 +168,26 @@ class TestRefreshEndpoint:
         assert body["devices"] >= 1
 
 
+class TestDownsampleEndpoint:
+    def test_downsample(self, client, auth_headers):
+        resp = client.get(
+            "/api/devices/000000000000/dates/2026-04-04/sessions/1/channels/MeasECGmV/downsample?buckets=10",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["channel"] == "MeasECGmV"
+        assert body["buckets"] == 10
+        assert len(body["data"]["min"]) == 10
+
+    def test_downsample_404(self, client, auth_headers):
+        resp = client.get(
+            "/api/devices/000000000000/dates/2026-04-04/sessions/1/channels/FAKE/downsample",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+
 class TestCoverageEndpoint:
     def test_get_coverage(self, client, auth_headers):
         resp = client.get("/api/devices/000000000000/coverage/2026/4", headers=auth_headers)

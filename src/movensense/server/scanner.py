@@ -252,6 +252,112 @@ class DataScanner:
             },
         }
 
+    def downsample_channel(
+        self, serial: str, date: str, log_id: int, channel_name: str,
+        start: float = 0, end: Optional[float] = None, buckets: int = 1000,
+    ) -> Optional[dict]:
+        """Return downsampled min/max/mean per time bucket for a channel."""
+        sessions = self.get_sessions(serial, date)
+        if sessions is None:
+            return None
+        session = next((s for s in sessions if s["log_id"] == log_id), None)
+        if session is None:
+            return None
+
+        try:
+            store = zarr.open_group(session["zarr_path"], mode="r")
+            if channel_name not in store:
+                return None
+            group = store[channel_name]
+            if "data" not in group:
+                return None
+
+            arr = group["data"][:]
+            rate = group.attrs.get("sampling_rate_hz", 1.0)
+            total = arr.shape[0]
+
+            # Time range selection
+            start_idx = max(0, int(start * rate))
+            end_idx = int(end * rate) if end is not None else total
+            end_idx = min(end_idx, total)
+            arr = arr[start_idx:end_idx]
+            n = arr.shape[0]
+
+            if n == 0:
+                return {"channel": channel_name, "data": {}, "total_samples": total}
+
+            duration = n / rate
+            actual_start = start_idx / rate
+            actual_end = end_idx / rate
+
+            result = {
+                "channel": channel_name,
+                "start": round(actual_start, 6),
+                "end": round(actual_end, 6),
+                "buckets": buckets,
+                "total_samples": total,
+                "sampling_rate_hz": rate,
+            }
+
+            # If fewer samples than buckets, return raw data
+            if n <= buckets:
+                time_arr = (np.arange(n) / rate + actual_start).tolist()
+                if arr.ndim == 1:
+                    result["data"] = {"time": time_arr, "values": arr.tolist()}
+                else:
+                    result["data"] = {"time": time_arr}
+                    cols = ["x", "y", "z", "a", "b", "c", "d", "e", "f"][:arr.shape[1]]
+                    result["columns"] = cols
+                    for i, col in enumerate(cols):
+                        result["data"][col] = arr[:, i].tolist()
+                return result
+
+            # Downsample: compute min/max/mean per bucket
+            bucket_size = n / buckets
+            time_arr = []
+
+            if arr.ndim == 1:
+                mins, maxs, means = [], [], []
+                for b in range(buckets):
+                    s = int(b * bucket_size)
+                    e = int((b + 1) * bucket_size)
+                    chunk = arr[s:e]
+                    if len(chunk) == 0:
+                        continue
+                    time_arr.append(round((s / rate) + actual_start, 6))
+                    mins.append(round(float(np.min(chunk)), 6))
+                    maxs.append(round(float(np.max(chunk)), 6))
+                    means.append(round(float(np.mean(chunk)), 6))
+                result["data"] = {"time": time_arr, "min": mins, "max": maxs, "mean": means}
+            else:
+                cols = ["x", "y", "z", "a", "b", "c", "d", "e", "f"][:arr.shape[1]]
+                result["columns"] = cols
+                col_data: dict = {"time": []}
+                for col in cols:
+                    col_data[f"{col}_min"] = []
+                    col_data[f"{col}_max"] = []
+                    col_data[f"{col}_mean"] = []
+
+                for b in range(buckets):
+                    s = int(b * bucket_size)
+                    e = int((b + 1) * bucket_size)
+                    chunk = arr[s:e]
+                    if len(chunk) == 0:
+                        continue
+                    col_data["time"].append(round((s / rate) + actual_start, 6))
+                    for i, col in enumerate(cols):
+                        col_data[f"{col}_min"].append(round(float(np.min(chunk[:, i])), 6))
+                        col_data[f"{col}_max"].append(round(float(np.max(chunk[:, i])), 6))
+                        col_data[f"{col}_mean"].append(round(float(np.mean(chunk[:, i])), 6))
+
+                result["data"] = col_data
+
+            return result
+
+        except Exception as e:
+            log.error(f"Downsample error: {e}")
+            return None
+
     def get_session_metadata(self, serial: str, date: str, log_id: int) -> Optional[dict]:
         """Get root metadata for a session."""
         sessions = self.get_sessions(serial, date)
