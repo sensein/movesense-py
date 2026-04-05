@@ -4,6 +4,9 @@ import numpy as np
 from .dsp import bandpass_filter, derivative, find_peaks, moving_average, normalize
 
 
+METHODS = ["pan_tompkins", "simple_threshold", "neurokit", "elgendi", "hamilton", "ensemble"]
+
+
 def detect_r_peaks(ecg: np.ndarray, fs: float, method: str = "pan_tompkins") -> np.ndarray:
     """Detect R-peaks in an ECG signal.
 
@@ -11,7 +14,13 @@ def detect_r_peaks(ecg: np.ndarray, fs: float, method: str = "pan_tompkins") -> 
     ----------
     ecg : 1D array of ECG samples
     fs : sampling rate in Hz
-    method : detection algorithm ("pan_tompkins" or "simple_threshold")
+    method : detection algorithm. Options:
+        - "pan_tompkins": Classic Pan-Tompkins (built-in)
+        - "simple_threshold": Basic threshold approach (built-in)
+        - "neurokit": NeuroKit2's default detector (requires neurokit2)
+        - "elgendi": Elgendi2010 two-moving-average (requires neurokit2)
+        - "hamilton": Hamilton-Tompkins (requires neurokit2)
+        - "ensemble": Consensus of multiple detectors (most robust)
 
     Returns
     -------
@@ -21,8 +30,12 @@ def detect_r_peaks(ecg: np.ndarray, fs: float, method: str = "pan_tompkins") -> 
         return _pan_tompkins(ecg, fs)
     elif method == "simple_threshold":
         return _simple_threshold(ecg, fs)
+    elif method in ("neurokit", "elgendi", "hamilton"):
+        return _neurokit_detect(ecg, fs, method)
+    elif method == "ensemble":
+        return _ensemble_detect(ecg, fs)
     else:
-        raise ValueError(f"Unknown method: {method}")
+        raise ValueError(f"Unknown method: {method}. Available: {METHODS}")
 
 
 def _pan_tompkins(ecg: np.ndarray, fs: float) -> np.ndarray:
@@ -117,3 +130,99 @@ def compute_hrv(rr_intervals: np.ndarray) -> dict:
         "std_hr": round(float(np.std(hr)), 2),
         "mean_rr": round(float(np.mean(rr)), 2),
     }
+
+
+# --- NeuroKit2-based detectors ---
+
+def _neurokit_detect(ecg: np.ndarray, fs: float, method: str) -> np.ndarray:
+    """R-peak detection using neurokit2 algorithms."""
+    try:
+        import neurokit2 as nk
+    except ImportError:
+        raise ImportError("neurokit2 is required for this method: pip install neurokit2")
+
+    method_map = {"neurokit": "neurokit", "elgendi": "elgendi2010", "hamilton": "hamilton2002"}
+    nk_method = method_map.get(method, "neurokit")
+
+    cleaned = nk.ecg_clean(ecg, sampling_rate=int(fs))
+    _, info = nk.ecg_peaks(cleaned, sampling_rate=int(fs), method=nk_method)
+    peaks = info.get("ECG_R_Peaks", np.array([]))
+    return np.array(peaks, dtype=int)
+
+
+def _ensemble_detect(ecg: np.ndarray, fs: float, min_agreement: int = 2) -> np.ndarray:
+    """Consensus R-peak detection using multiple algorithms.
+
+    A peak is kept only if at least `min_agreement` detectors agree
+    (within 50ms tolerance).
+    """
+    methods = ["pan_tompkins"]
+    # Add neurokit methods if available
+    try:
+        import neurokit2
+        methods.extend(["neurokit", "elgendi", "hamilton"])
+    except ImportError:
+        methods.append("simple_threshold")
+
+    all_peaks = []
+    for m in methods:
+        try:
+            peaks = detect_r_peaks(ecg, fs, method=m)
+            all_peaks.append(set(peaks.tolist()))
+        except Exception:
+            continue
+
+    if not all_peaks:
+        return np.array([], dtype=int)
+
+    # Merge: for each candidate peak, count how many detectors found one nearby
+    tolerance = int(0.05 * fs)  # 50ms
+    all_candidates = sorted(set().union(*all_peaks))
+    consensus = []
+
+    for candidate in all_candidates:
+        votes = sum(
+            1 for peak_set in all_peaks
+            if any(abs(candidate - p) <= tolerance for p in peak_set)
+        )
+        if votes >= min_agreement:
+            consensus.append(candidate)
+
+    # Remove duplicates within tolerance
+    if not consensus:
+        return np.array([], dtype=int)
+
+    consensus.sort()
+    deduped = [consensus[0]]
+    for c in consensus[1:]:
+        if c - deduped[-1] > tolerance:
+            deduped.append(c)
+
+    return np.array(deduped, dtype=int)
+
+
+def compute_bsqi(ecg: np.ndarray, fs: float) -> float:
+    """Beat Signal Quality Index: agreement between two R-peak detectors.
+
+    Returns a score 0-1 where 1 = perfect agreement (high quality).
+    """
+    try:
+        peaks1 = detect_r_peaks(ecg, fs, method="pan_tompkins")
+        peaks2 = detect_r_peaks(ecg, fs, method="simple_threshold")
+    except Exception:
+        return 0.0
+
+    if len(peaks1) == 0 and len(peaks2) == 0:
+        return 1.0
+    if len(peaks1) == 0 or len(peaks2) == 0:
+        return 0.0
+
+    # Count matching peaks (within 50ms)
+    tolerance = int(0.05 * fs)
+    matched = 0
+    for p1 in peaks1:
+        if any(abs(p1 - p2) <= tolerance for p2 in peaks2):
+            matched += 1
+
+    total = max(len(peaks1), len(peaks2))
+    return round(matched / total, 3)
