@@ -250,32 +250,62 @@
     let deviceState = null;
     let originalConfig = []; // config paths as read from device
 
-    const MEASUREMENTS = [
-      { id: 'ecg', label: 'ECG', pathTemplate: '/Meas/Ecg/{rate}/mV', rates: [125, 128, 200, 250, 256, 500, 512], defaultRate: 200 },
-      { id: 'acc', label: 'Accelerometer', pathTemplate: '/Meas/Acc/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
-      { id: 'gyro', label: 'Gyroscope', pathTemplate: '/Meas/Gyro/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
-      { id: 'magn', label: 'Magnetometer', pathTemplate: '/Meas/Magn/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 13 },
-      { id: 'imu6', label: 'IMU 6-axis', pathTemplate: '/Meas/IMU6/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
-      { id: 'imu9', label: 'IMU 9-axis', pathTemplate: '/Meas/IMU9/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
-      { id: 'temp', label: 'Temperature', pathTemplate: '/Meas/Temp', rates: [], defaultRate: null },
-      { id: 'hr', label: 'Heart Rate', pathTemplate: '/Meas/HR', rates: [], defaultRate: null },
+    // MEASUREMENTS is built dynamically from device capabilities on connect
+    let MEASUREMENTS = [];
+
+    // Fallback measurements if device capabilities can't be read
+    const FALLBACK_MEASUREMENTS = [
+      { id: 'ecg', label: 'ECG', pathTemplate: '/Meas/Ecg/{rate}/mV', rates: [125, 200, 512], defaultRate: 200 },
+      { id: 'acc', label: 'Accelerometer', pathTemplate: '/Meas/Acc/{rate}', rates: [13, 52, 208], defaultRate: 52 },
+      { id: 'gyro', label: 'Gyroscope', pathTemplate: '/Meas/Gyro/{rate}', rates: [13, 52, 208], defaultRate: 52 },
     ];
 
-    function buildConfigPanel() {
+    function buildConfigFromCapabilities(capabilities) {
+      MEASUREMENTS = [];
       const el = document.getElementById('config-channels');
       el.innerHTML = '';
-      MEASUREMENTS.forEach(m => {
+
+      // Build from device capabilities
+      const order = ['ecg', 'acc', 'gyro', 'magn', 'imu6', 'imu6m', 'imu9', 'temp', 'hr'];
+      for (const id of order) {
+        const cap = capabilities[id];
+        if (!cap || !cap.available) continue;
+        const m = {
+          id: id,
+          label: cap.label || id,
+          pathTemplate: cap.path_template || '',
+          rates: cap.rates || [],
+          defaultRate: cap.rates && cap.rates.length > 0 ? cap.rates[Math.floor(cap.rates.length / 2)] : null,
+        };
+        MEASUREMENTS.push(m);
+
         let rateHtml = '';
         if (m.rates.length > 0) {
           rateHtml = `<select id="rate-${m.id}" onchange="onConfigChange()">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`;
         }
         el.innerHTML += `<div class="config-item" id="cfg-item-${m.id}">
-          <label><input type="checkbox" id="cfg-${m.id}" onchange="onConfigChange()"> ${m.label}</label>
+          <label><input type="checkbox" id="cfg-${m.id}" onchange="onConfigChange()"> ${m.label} ${cap.unit ? '('+cap.unit+')' : ''}</label>
           ${rateHtml}
         </div>`;
-      });
+      }
+
+      if (MEASUREMENTS.length === 0) {
+        // Fallback
+        MEASUREMENTS = [...FALLBACK_MEASUREMENTS];
+        MEASUREMENTS.forEach(m => {
+          let rateHtml = m.rates.length > 0
+            ? `<select id="rate-${m.id}" onchange="onConfigChange()">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`
+            : '';
+          el.innerHTML += `<div class="config-item" id="cfg-item-${m.id}">
+            <label><input type="checkbox" id="cfg-${m.id}" onchange="onConfigChange()"> ${m.label}</label>
+            ${rateHtml}
+          </div>`;
+        });
+      }
     }
-    buildConfigPanel();
+
+    // Show empty panel initially (populated on connect)
+    document.getElementById('config-channels').innerHTML = '<div style="color:#999;font-size:0.8rem">Connect to device to see available measurements</div>';
 
     document.getElementById('config-confirm').addEventListener('input', (e) => {
       document.getElementById('btn-config').disabled = e.target.value.trim().toLowerCase() !== 'confirm';
@@ -409,7 +439,10 @@
         <div class="card"><h3>${info.serial}</h3>
         <div class="meta">${info.product_name} v${info.app_version} | Battery: ${info.battery}% | State: ${info.datalogger_state} | ${memInfo}</div></div>`;
 
-      // Set config checkboxes from device
+      // Build config panel from device capabilities, then set current config
+      if (info.capabilities) {
+        buildConfigFromCapabilities(info.capabilities);
+      }
       setConfigFromDevice(info.current_config || '');
 
       // Config editor state
