@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Capture validation dataset from Movesense device.
+"""Capture raw validation dataset from Movesense device.
 
-Configures all channels, logs + subscribes via rotation (3 channels per batch),
-saves raw packets and parsed data for protocol validation.
+Step 1: Configure all channels, start logging, subscribe via rotation,
+        save raw binary packets to disk.
+Step 2: Stop logging, fetch the SBEM log.
+Step 3 (separate script): Parse both and compare.
 
 Usage:
     python scripts/capture_validation.py [--duration 5] [--batch-size 3]
@@ -15,19 +17,11 @@ import time
 from pathlib import Path
 
 from movensense.cli import _load_env_serial
-from movensense.protocol import parse_subscription_packet
 from movensense.sensor import SensorCommand
 
-# All subscribable channels with default rates
 ALL_CHANNELS = [
-    "/Meas/Ecg/200/mV",
-    "/Meas/Acc/52",
-    "/Meas/Gyro/52",
-    "/Meas/Magn/13",
-    "/Meas/IMU6/52",
-    "/Meas/IMU9/52",
-    "/Meas/Temp",
-    "/Meas/HR",
+    "/Meas/Ecg/200/mV", "/Meas/Acc/52", "/Meas/Gyro/52", "/Meas/Magn/13",
+    "/Meas/IMU6/52", "/Meas/IMU9/52", "/Meas/Temp", "/Meas/HR",
 ]
 
 OUT_DIR = Path.home() / "dbp" / "data" / "movesense" / "validation_capture"
@@ -39,20 +33,32 @@ async def capture(duration_per_batch: float, batch_size: int):
         print("Error: set MSN in .env")
         return
 
+    ts_label = time.strftime("%Y%m%d_%H%M%S")
+    capture_dir = OUT_DIR / ts_label
+    capture_dir.mkdir(parents=True, exist_ok=True)
+
     print(f"Device: {serial}")
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    all_data = {}
+    print(f"Output: {capture_dir}")
+
+    raw_packets: dict[str, list[bytes]] = {}
+    metadata = {
+        "serial": serial,
+        "all_channels": ALL_CHANNELS,
+        "duration_per_batch_s": duration_per_batch,
+        "batch_size": batch_size,
+        "start_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
 
     async with SensorCommand(serial) as sensor:
-        # Configure and start logging
+        # Configure + start logging
         config_data = bytearray()
         for p in ALL_CHANNELS + ["/Time/Detailed"]:
             config_data.extend(p.encode() + b"\0")
         await sensor.configure_device(config_data)
         await sensor.start_logging()
-        print(f"Logging started with {len(ALL_CHANNELS)} channels")
+        print(f"Logging started ({len(ALL_CHANNELS)} channels)")
 
-        # Rotate through channel batches
+        # Rotate through batches — collect raw binary only
         batches = [ALL_CHANNELS[i:i + batch_size] for i in range(0, len(ALL_CHANNELS), batch_size)]
         for batch_idx, batch in enumerate(batches):
             print(f"\n--- Batch {batch_idx + 1}/{len(batches)}: {batch} ---")
@@ -64,7 +70,7 @@ async def capture(duration_per_batch: float, batch_size: int):
                     r = await sensor.subscribe_to_resource(ch, reference=ref)
                     if r.get("success"):
                         refs[ref] = ch
-                        all_data.setdefault(ch, [])
+                        raw_packets.setdefault(ch, [])
                         print(f"  ✓ {ch}")
                     else:
                         print(f"  ✗ {ch} (status {r.get('status_code')})")
@@ -79,19 +85,11 @@ async def capture(duration_per_batch: float, batch_size: int):
                     ref = resp.get("reference")
                     ch = refs.get(ref)
                     if ch:
-                        payload = resp.get("data_payload", b"")
-                        parsed = parse_subscription_packet(payload, ch)
-                        all_data[ch].append({
-                            "timestamp_ms": parsed.timestamp_ms,
-                            "values": parsed.values,
-                            "unit": parsed.unit,
-                            "n_values": len(parsed.values),
-                            "raw_hex": payload.hex(),
-                        })
+                        raw_packets[ch].append(resp.get("data_payload", b""))
                         count += 1
                 except asyncio.TimeoutError:
                     continue
-            print(f"  Captured {count} packets")
+            print(f"  Captured {count} raw packets")
 
             for ref in refs:
                 try:
@@ -106,40 +104,50 @@ async def capture(duration_per_batch: float, batch_size: int):
         print("\nStopping logging...")
         await sensor.stop_logging()
 
-    # Save
-    result = {
-        "serial": serial,
-        "active_channels": list(all_data.keys()),
-        "all_attempted": ALL_CHANNELS,
-        "duration_per_batch_s": duration_per_batch,
-        "batch_size": batch_size,
-        "capture_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    for ch, pkts in all_data.items():
-        total = sum(p["n_values"] for p in pkts)
-        result[ch] = {
-            "packets": len(pkts),
-            "total_samples": total,
-            "first_3": pkts[:3],
+    # Save raw binary packets per channel
+    metadata["captured_channels"] = {}
+    for ch, pkts in raw_packets.items():
+        safe_name = ch.replace("/", "_").strip("_")
+        bin_file = capture_dir / f"{safe_name}.bin"
+        with open(bin_file, "wb") as f:
+            for pkt in pkts:
+                # Write: uint32 packet_length + raw bytes
+                f.write(len(pkt).to_bytes(4, "little"))
+                f.write(pkt)
+        metadata["captured_channels"][ch] = {
+            "packet_count": len(pkts),
+            "bin_file": str(bin_file.relative_to(capture_dir)),
+            "total_bytes": sum(len(p) for p in pkts),
         }
-        print(f"  {ch}: {len(pkts)} pkts, {total} samples")
-        if pkts and pkts[0]["values"]:
-            v = pkts[0]["values"]
-            if isinstance(v[0], list):
-                print(f"    first: {v[0]}")
-            else:
-                print(f"    first 3: {v[:3]}")
+        print(f"  {ch}: {len(pkts)} packets → {bin_file.name}")
 
-    out_file = OUT_DIR / f"capture_{time.strftime('%Y%m%d_%H%M%S')}.json"
-    with open(out_file, "w") as f:
-        json.dump(result, f, indent=2, default=str)
-    print(f"\nSaved to {out_file}")
+    metadata["end_time"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    meta_file = capture_dir / "metadata.json"
+    with open(meta_file, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"\nMetadata: {meta_file}")
+
+    # Now fetch the log
+    print("\nFetching logged data for comparison...")
+    from movensense.cli import _fetch
+    fetch_dir = capture_dir / "fetched"
+    fetch_dir.mkdir(exist_ok=True)
+    try:
+        result = await _fetch(serial, fetch_dir, edf=False)
+        if result.get("success"):
+            print(f"  Fetched {len(result.get('files', []))} logs → {fetch_dir}")
+        else:
+            print(f"  Fetch failed: {result.get('error')}")
+    except Exception as e:
+        print(f"  Fetch error: {e}")
+
+    print(f"\nDone. Run parse_validation.py to compare subscription vs logged data.")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Capture validation dataset from Movesense device")
-    parser.add_argument("-d", "--duration", type=float, default=5, help="Seconds per batch (default: 5)")
-    parser.add_argument("-b", "--batch-size", type=int, default=3, help="Channels per batch (default: 3)")
+    parser = argparse.ArgumentParser(description="Capture raw validation dataset")
+    parser.add_argument("-d", "--duration", type=float, default=5, help="Seconds per batch")
+    parser.add_argument("-b", "--batch-size", type=int, default=3, help="Channels per batch")
     args = parser.parse_args()
     asyncio.run(capture(args.duration, args.batch_size))
 
