@@ -168,6 +168,36 @@ class TestRefreshEndpoint:
         assert body["devices"] >= 1
 
 
+class TestWindowStatsEndpoint:
+    def test_window_stats(self, client, auth_headers):
+        resp = client.post(
+            "/api/devices/000000000000/dates/2026-04-04/sessions/1/window-stats?start=0",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "channels" in body
+        assert "MeasECGmV" in body["channels"]
+        ecg = body["channels"]["MeasECGmV"]
+        assert "min" in ecg
+        assert "max" in ecg
+        assert "mean" in ecg
+
+    def test_window_stats_with_range(self, client, auth_headers):
+        resp = client.post(
+            "/api/devices/000000000000/dates/2026-04-04/sessions/1/window-stats?start=0&end=1.0",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_window_stats_404(self, client, auth_headers):
+        resp = client.post(
+            "/api/devices/NONEXISTENT/dates/2026-04-04/sessions/1/window-stats",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+
 class TestDownsampleEndpoint:
     def test_downsample(self, client, auth_headers):
         resp = client.get(

@@ -67,7 +67,8 @@ async function showSessions(serial, date) {
   } catch (e) { content.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
-let tsViewer = null;
+let channelViewer = null;
+window.channelViewer = null;
 
 async function showChannels(serial, date, logId) {
   subtitle.textContent = `Log ${logId}`;
@@ -78,34 +79,18 @@ async function showChannels(serial, date, logId) {
     { label: `Log ${logId}` }
   ]);
 
-  // Show time series viewer + channel table
-  content.innerHTML = '<div id="ts-viewer"></div><hr style="margin:1.5rem 0;border-color:var(--border)"><div id="channel-table"></div>';
+  content.innerHTML = `
+    <div class="cv-layout">
+      <div class="cv-sidebar" id="cv-selector"></div>
+      <div class="cv-charts" id="cv-charts"></div>
+      <div class="cv-stats" id="cv-stats"></div>
+    </div>`;
 
-  // Load synchronized time series viewer
-  if (typeof TimeSeriesViewer !== 'undefined') {
-    tsViewer = new TimeSeriesViewer('ts-viewer', apiFetch);
-    window.tsViewer = tsViewer;
-    tsViewer.load(serial, date, logId);
+  if (typeof ChannelViewer !== 'undefined') {
+    channelViewer = new ChannelViewer('cv-selector', 'cv-charts', 'cv-stats');
+    window.channelViewer = channelViewer;
+    channelViewer.load(serial, date, logId);
   }
-
-  // Also show channel metadata table
-  try {
-    const data = await apiFetch(`/devices/${serial}/dates/${date}/sessions/${logId}/channels`);
-    let html = '<table><thead><tr><th>Channel</th><th>Type</th><th>Rate</th><th>Unit</th><th>Samples</th><th>Shape</th></tr></thead><tbody>';
-    for (const c of data.channels) {
-      html += `<tr class="card" style="cursor:pointer" onclick="showChannelData('${serial}','${date}',${logId},'${c.name}')">
-        <td><strong>${c.name}</strong></td>
-        <td>${c.sensor_type || '-'}</td>
-        <td>${c.sampling_rate_hz ? c.sampling_rate_hz + ' Hz' : '-'}</td>
-        <td>${c.unit || '-'}</td>
-        <td>${c.sample_count}</td>
-        <td>${JSON.stringify(c.shape)}</td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
-    const tableEl = document.getElementById('channel-table');
-    if (tableEl) tableEl.innerHTML = html;
-  } catch (e) {}
 }
 
 async function showChannelData(serial, date, logId, channel) {
