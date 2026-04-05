@@ -106,36 +106,26 @@ class TimeSeriesViewer {
     let series = [{}]; // first series = x axis (no label needed)
     let plotData = [timeArr];
 
-    if (data.values) {
-      // Raw data mode
-      if (Array.isArray(data.values[0])) {
-        // Multi-axis raw: values = [[x,y,z], [x,y,z], ...]
-        const nAxes = data.values[0].length;
-        const colors = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4'];
-        const labels = (ds.columns || ['x','y','z','a','b','c']).slice(0, nAxes);
-        for (let a = 0; a < nAxes; a++) {
-          series.push({ label: labels[a], stroke: colors[a] || '#888', width: 1 });
-          plotData.push(data.values.map(row => row[a]));
-        }
-      } else {
-        // 1D raw
-        series.push({ label: ch.name, stroke: '#2563eb', width: 1 });
-        plotData.push(data.values);
-      }
-    } else if (ds.columns) {
-      // Downsampled multi-axis: per-column mean arrays
-      const colors = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4'];
+    const colors = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6', '#a855f7'];
+
+    if (ds.columns && ds.columns.length > 0) {
+      // Multi-axis data (raw or downsampled)
       for (let c = 0; c < ds.columns.length; c++) {
         const col = ds.columns[c];
-        const meanKey = `${col}_mean`;
-        if (data[meanKey]) {
-          series.push({ label: col, stroke: colors[c] || '#888', width: 1 });
-          plotData.push(data[meanKey]);
+        // Try raw column first (e.g., data.x), then downsampled (e.g., data.x_mean)
+        const arr = data[col] || data[`${col}_mean`];
+        if (arr && arr.length === timeArr.length) {
+          series.push({ label: col, stroke: colors[c % colors.length], width: 1 });
+          plotData.push(arr);
         }
       }
+    } else if (data.values) {
+      // 1D raw data
+      series.push({ label: ch.name, stroke: '#2563eb', width: 1 });
+      plotData.push(data.values);
     } else if (data.mean) {
-      // Downsampled 1D
-      series.push({ label: 'mean', stroke: '#2563eb', width: 1 });
+      // 1D downsampled
+      series.push({ label: ch.name, stroke: '#2563eb', width: 1 });
       plotData.push(data.mean);
     }
 
