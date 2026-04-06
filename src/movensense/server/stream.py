@@ -31,6 +31,8 @@ class StreamManager:
         self._sensor: Optional[SensorCommand] = None
         self._stream_task: Optional[asyncio.Task] = None
         self._refs: dict[int, str] = {}  # ref_id → channel path
+        self._ts_origin: Optional[int] = None  # first device timestamp (ms) — shared origin
+        self._wall_origin: Optional[float] = None  # time.monotonic() at stream start
 
     async def add_client(self) -> asyncio.Queue:
         """Register a new WebSocket client. Returns a queue to read messages from."""
@@ -50,8 +52,10 @@ class StreamManager:
     async def start(self, serial: str, channels: list[str]) -> None:
         """Connect to device and start streaming specified channels."""
         if self.state == StreamState.STREAMING:
-            await self._broadcast({"type": "error", "message": "Already streaming. Stop first."})
-            return
+            # Auto-stop before restarting with new config
+            log.info("Stopping current stream before restart...")
+            await self.stop()
+            await asyncio.sleep(0.5)
 
         self.state = StreamState.CONNECTING
         self.device_serial = serial
@@ -119,8 +123,47 @@ class StreamManager:
         self.active_channels = []
         await self._broadcast(self._status_message())
 
+    async def _emit_parsed(self, parsed, channel: str, wall_elapsed: float) -> None:
+        """Convert parsed packet to seconds-since-stream-start and broadcast.
+
+        All sensor timestamps (ECG, IMU, ACC, GYRO) use the same device clock
+        in milliseconds since boot. Verified empirically: ECG@250 ts≈2360905,
+        IMU9@208 ts≈2361090 (same clock, ~185ms apart).
+        Formula: g_t = (t_n - t_0) * 0.001 + g_t0
+        """
+        if parsed.timestamp_ms > 0:
+            if channel not in self._channel_origins:
+                self._channel_origins[channel] = (parsed.timestamp_ms, wall_elapsed)
+                log.info(f"Channel {channel}: first_ts={parsed.timestamp_ms}ms, wall_offset={wall_elapsed:.3f}s")
+            t0_dev, g_t0 = self._channel_origins[channel]
+            t_seconds = (parsed.timestamp_ms - t0_dev) * 0.001 + g_t0
+        else:
+            t_seconds = wall_elapsed
+
+        await self._broadcast({
+            "type": "data",
+            "channel": channel,
+            "timestamp": t_seconds,
+            "values": parsed.values,
+            "unit": parsed.unit,
+            "axes": parsed.axes,
+        })
+
     async def _forward_data(self) -> None:
-        """Read BLE data from data_queue and broadcast to all clients."""
+        """Read BLE data from data_queue and broadcast to all clients.
+
+        Timestamps converted to seconds-since-stream-start:
+        Each channel tracks its own first timestamp (t_0). Different channels
+        may use different timestamp epochs (ECG=device uptime, IMU=Unix epoch).
+        Formula: g_t = (t_n - t_0) * 0.001 + g_t0
+        where g_t0 = wall-clock offset when channel's first packet arrived.
+        HR/Temp (no device timestamp) use wall-clock directly.
+        """
+        import time
+        self._wall_origin = time.monotonic()
+        self._channel_origins = {}  # channel → (first_device_ts, wall_offset_seconds, scale)
+        pending = {}  # ref → accumulated payload bytes (code=2 + code=3 parts)
+
         try:
             while self.state == StreamState.STREAMING:
                 try:
@@ -131,18 +174,43 @@ class StreamManager:
                     ref = response.get("reference")
                     channel = self._refs.get(ref)
 
-                    if channel and resp_code in [2, 3]:  # GSP_RESP_DATA, GSP_RESP_DATA_PART2
-                        payload = response.get("data_payload", b"")
-                        if len(payload) > 0:
-                            parsed = parse_subscription_packet(payload, channel)
-                            if parsed.values:
-                                await self._broadcast({
-                                    "type": "data",
-                                    "channel": channel,
-                                    "timestamp": parsed.timestamp_ms,
-                                    "values": parsed.values,
-                                    "unit": parsed.unit,
-                                })
+                    if not channel or resp_code not in (2, 3):
+                        continue
+
+                    payload = response.get("data_payload", b"")
+                    if not payload:
+                        continue
+
+                    if resp_code == 2:
+                        # New data packet — store for potential Part2 continuation
+                        pending[ref] = payload
+                    elif resp_code == 3:
+                        # Continuation — append to pending code=2 payload
+                        if ref in pending:
+                            pending[ref] += payload
+                        else:
+                            continue  # orphan Part2, skip
+
+                    # Try parsing the accumulated payload
+                    full = pending.get(ref)
+                    if not full:
+                        continue
+
+                    parsed = parse_subscription_packet(full, channel)
+                    if not parsed.values:
+                        continue
+
+                    # Validate: if values are garbage, payload is still incomplete
+                    sample = parsed.values[0]
+                    vals = sample if isinstance(sample, list) else [sample]
+                    if any(abs(v) > 100000 for v in vals):
+                        # Incomplete — wait for more Part2 data
+                        continue
+
+                    # Valid packet — emit and clear buffer
+                    del pending[ref]
+                    wall_elapsed = time.monotonic() - self._wall_origin
+                    await self._emit_parsed(parsed, channel, wall_elapsed)
 
                 except asyncio.TimeoutError:
                     # Check if BLE still connected

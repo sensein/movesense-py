@@ -32,6 +32,17 @@ def create_app(data_dir: Path) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Disable browser caching for static files during development
+    from starlette.middleware.base import BaseHTTPMiddleware
+    class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/static/"):
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+            return response
+    app.add_middleware(NoCacheStaticMiddleware)
+
     scanner = DataScanner(data_dir)
     scanner.scan()
 
@@ -44,6 +55,26 @@ def create_app(data_dir: Path) -> FastAPI:
     app.state.token = token
     app.state.scanner = scanner
     app.state.manifest = manifest
+
+    # --- Audit helper ---
+
+    def _audit(serial: str, action: str, detail: dict | None = None, success: bool = True):
+        """Append an audit entry to {data_dir}/{serial}/audit.jsonl."""
+        try:
+            audit_dir = data_dir / serial
+            audit_dir.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "action": action,
+                "serial": serial,
+                "success": success,
+            }
+            if detail:
+                entry.update(detail)
+            with open(audit_dir / "audit.jsonl", "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            log.warning(f"Failed to write audit entry for {action}")
 
     # --- Public endpoints ---
 
@@ -128,13 +159,38 @@ def create_app(data_dir: Path) -> FastAPI:
 
     # --- Device Control (Live Stream tab) ---
 
+    def _check_streaming(serial: str):
+        """Raise if a live stream is active for this device — BLE allows only one connection."""
+        sm = getattr(app.state, "stream_manager", None)
+        if sm and sm.state.value == "streaming" and sm.device_serial == serial:
+            raise HTTPException(
+                409, detail="Device is currently streaming. Stop the live stream first."
+            )
+
     @app.post("/api/device/connect")
     async def device_connect(request: dict, _: str = Depends(verify_token)):
-        """Connect to device, return status + current config."""
+        """Connect to device, return status + current config.
+        If a stream is active for this device, return cached info (can't open second BLE connection).
+        """
         from ..sensor import SensorCommand
         serial = request.get("serial", "")
         if not serial:
             raise HTTPException(400, detail="serial required")
+
+        # If streaming this device, return cached info (BLE is held by StreamManager)
+        sm = getattr(app.state, "stream_manager", None)
+        if sm and sm.state.value == "streaming" and sm.device_serial == serial:
+            cached = getattr(app.state, "_last_connect_info", None)
+            if cached and cached.get("serial") == serial:
+                return cached
+            # No cached info — return minimal info
+            return {
+                "serial": serial, "product_name": "Movesense", "app_version": "?",
+                "battery": None, "datalogger_state": "Streaming", "dlstate": 3,
+                "current_config": "", "config_count": 0, "capabilities": {},
+                "memory_full": False, "total_log_size_bytes": 0,
+            }
+
         try:
             async with SensorCommand(serial) as sensor:
                 status = await sensor.get_status()
@@ -204,6 +260,21 @@ def create_app(data_dir: Path) -> FastAPI:
                     except Exception:
                         capabilities[sid] = {"available": False, "label": label}
 
+                # HR and Temp are standard on all Movesense devices.
+                # They have no /Info endpoint and no rate parameter — mark available as fallback.
+                for sid, label, template, unit in [
+                    ("hr", "Heart Rate", "/Meas/HR", "bpm"),
+                    ("temp", "Temperature", "/Meas/Temp", "K"),
+                ]:
+                    if not capabilities.get(sid, {}).get("available"):
+                        capabilities[sid] = {
+                            "available": True,
+                            "label": label,
+                            "path_template": template,
+                            "unit": unit,
+                            "rates": [],  # no rate parameter for these
+                        }
+
                 # IMU6/9 use ACC rates (same IMU hardware)
                 imu_rates = capabilities.get("acc", {}).get("rates", [])
                 imu_available = capabilities.get("imu", {}).get("available", False) or len(imu_rates) > 0
@@ -240,8 +311,15 @@ def create_app(data_dir: Path) -> FastAPI:
                 except Exception:
                     pass
 
-                return {
-                    "serial": status.get("serial_number", serial),
+                serial_str = status.get("serial_number", serial)
+                _audit(serial_str, "connect", {
+                    "battery": status.get("battery_level"),
+                    "dlstate": status.get("dlstate", 1),
+                    "config_count": config_count,
+                    "memory_full": is_full,
+                })
+                result = {
+                    "serial": serial_str,
                     "product_name": status.get("product_name", "Unknown"),
                     "app_version": status.get("app_version", "Unknown"),
                     "battery": status.get("battery_level"),
@@ -253,8 +331,14 @@ def create_app(data_dir: Path) -> FastAPI:
                     "memory_full": is_full,
                     "total_log_size_bytes": total_log_size,
                 }
+                app.state._last_connect_info = result
+                return result
         except Exception as e:
-            raise HTTPException(500, detail=str(e))
+            msg = str(e)
+            _audit(serial, "connect", {"error": msg}, success=False)
+            if "not found" in msg.lower():
+                raise HTTPException(503, detail=f"Device not found via BLE. Is it nearby and awake? ({msg})")
+            raise HTTPException(500, detail=msg)
 
     @app.post("/api/device/config")
     async def device_config(request: dict, _: str = Depends(verify_token)):
@@ -276,27 +360,17 @@ def create_app(data_dir: Path) -> FastAPI:
                 if not result.get("success"):
                     raise HTTPException(500, detail=f"Config failed: {result.get('error')}")
 
-                # Write audit log
-                audit_dir = data_dir / serial
-                audit_dir.mkdir(parents=True, exist_ok=True)
-                audit_file = audit_dir / "audit.jsonl"
-                audit_entry = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "action": "config_change",
-                    "serial": serial,
+                _audit(serial, "config_change", {
                     "new_paths": paths,
                     "previous_paths": audit.get("previous", []),
                     "added": audit.get("added", []),
                     "removed": audit.get("removed", []),
-                }
-                with open(audit_file, "a") as f:
-                    f.write(json.dumps(audit_entry) + "\n")
-                log.info(f"Config change audit: {audit_entry}")
-
+                })
                 return {"status": "configured", "paths": paths}
         except HTTPException:
             raise
         except Exception as e:
+            _audit(serial, "config_change", {"error": str(e)}, success=False)
             raise HTTPException(500, detail=str(e))
 
     @app.post("/api/device/start")
@@ -306,18 +380,22 @@ def create_app(data_dir: Path) -> FastAPI:
         serial = request.get("serial", "")
         if not serial:
             raise HTTPException(400, detail="serial required")
+        _check_streaming(serial)
         try:
             async with SensorCommand(serial) as sensor:
                 status = await sensor.get_status()
                 if status.get("dlstate") == 3:
+                    _audit(serial, "start_logging", {"note": "already logging"})
                     return {"status": "already_logging"}
                 result = await sensor.start_logging()
                 if not result.get("success"):
                     raise HTTPException(500, detail=f"Start failed: {result.get('error')}")
+                _audit(serial, "start_logging")
                 return {"status": "logging_started"}
         except HTTPException:
             raise
         except Exception as e:
+            _audit(serial, "start_logging", {"error": str(e)}, success=False)
             raise HTTPException(500, detail=str(e))
 
     @app.post("/api/device/fetch")
@@ -327,6 +405,7 @@ def create_app(data_dir: Path) -> FastAPI:
         serial = request.get("serial", "")
         if not serial:
             raise HTTPException(400, detail="serial required")
+        _check_streaming(serial)
 
         out_dir = data_dir / serial / datetime.now(timezone.utc).strftime("%Y-%m-%d")
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -335,6 +414,10 @@ def create_app(data_dir: Path) -> FastAPI:
             result = await _fetch(serial, out_dir, edf=False)
             if result.get("success"):
                 scanner.scan()  # refresh index
+                _audit(serial, "fetch", {
+                    "log_count": len(result.get("files", [])),
+                    "output_dir": str(out_dir),
+                })
                 return {
                     "status": "fetched",
                     "files": result.get("files", []),
@@ -342,10 +425,12 @@ def create_app(data_dir: Path) -> FastAPI:
                     "log_count": len(result.get("files", [])),
                 }
             else:
+                _audit(serial, "fetch", {"error": result.get("error")}, success=False)
                 raise HTTPException(500, detail=result.get("error", "Fetch failed"))
         except HTTPException:
             raise
         except Exception as e:
+            _audit(serial, "fetch", {"error": str(e)}, success=False)
             raise HTTPException(500, detail=str(e))
 
     @app.post("/api/device/erase")
@@ -355,15 +440,18 @@ def create_app(data_dir: Path) -> FastAPI:
         serial = request.get("serial", "")
         if not serial:
             raise HTTPException(400, detail="serial required")
+        _check_streaming(serial)
         try:
             async with SensorCommand(serial, set_time=False) as sensor:
                 result = await sensor.erase_memory()
                 if not result.get("success"):
                     raise HTTPException(500, detail=f"Erase failed: {result.get('error')}")
+                _audit(serial, "erase")
                 return {"status": "memory_erased"}
         except HTTPException:
             raise
         except Exception as e:
+            _audit(serial, "erase", {"error": str(e)}, success=False)
             raise HTTPException(500, detail=str(e))
 
     @app.post("/api/device/stop")
@@ -373,15 +461,18 @@ def create_app(data_dir: Path) -> FastAPI:
         serial = request.get("serial", "")
         if not serial:
             raise HTTPException(400, detail="serial required")
+        _check_streaming(serial)
         try:
             async with SensorCommand(serial) as sensor:
                 result = await sensor.stop_logging()
                 if not result.get("success"):
                     raise HTTPException(500, detail=f"Stop failed: {result.get('error')}")
+                _audit(serial, "stop_logging")
                 return {"status": "logging_stopped"}
         except HTTPException:
             raise
         except Exception as e:
+            _audit(serial, "stop_logging", {"error": str(e)}, success=False)
             raise HTTPException(500, detail=str(e))
 
     @app.get("/api/devices/{serial}/dates/{date}/sessions/{log_id}/window-stats")
@@ -427,7 +518,7 @@ def create_app(data_dir: Path) -> FastAPI:
             if chunk.size == 0:
                 continue
 
-            ch_stats = {"sample_count": len(chunk), "sampling_rate_hz": rate}
+            ch_stats = {"sample_count": int(len(chunk)), "sampling_rate_hz": float(rate)}
 
             if chunk.ndim == 1:
                 ch_stats.update({
@@ -458,14 +549,14 @@ def create_app(data_dir: Path) -> FastAPI:
                         if len(peaks) >= 2:
                             rr = compute_rr_intervals(peaks, rate)
                             hrv = compute_hrv(rr)
-                            ch_stats["hr_bpm"] = hrv["mean_hr"]
-                            ch_stats["hrv_sdnn"] = hrv["sdnn"]
-                            ch_stats["hrv_rmssd"] = hrv["rmssd"]
-                            ch_stats["r_peak_count"] = len(peaks)
+                            ch_stats["hr_bpm"] = round(float(hrv["mean_hr"]), 1)
+                            ch_stats["hrv_sdnn"] = round(float(hrv["sdnn"]), 2)
+                            ch_stats["hrv_rmssd"] = round(float(hrv["rmssd"]), 2)
+                            ch_stats["r_peak_count"] = int(len(peaks))
                         sqi = ecg_signal_quality(chunk, rate, window_s=min(5.0, len(chunk) / rate))
                         if sqi:
-                            ch_stats["sqi"] = sqi[0]["sqi"]
-                            ch_stats["sqi_level"] = sqi[0]["level"]
+                            ch_stats["sqi"] = round(float(sqi[0]["sqi"]), 3)
+                            ch_stats["sqi_level"] = str(sqi[0]["level"])
                     except Exception:
                         pass
 
@@ -475,7 +566,7 @@ def create_app(data_dir: Path) -> FastAPI:
                     from movensense.physio.motion import classify_activity
                     labels = classify_activity(chunk, rate)
                     if len(labels) > 0:
-                        activity_pct = round(100 * sum(1 for l in labels if l == "activity") / len(labels), 1)
+                        activity_pct = round(float(100 * sum(1 for l in labels if l == "activity") / len(labels)), 1)
                         ch_stats["activity_pct"] = activity_pct
                 except Exception:
                     pass
@@ -509,6 +600,11 @@ def create_app(data_dir: Path) -> FastAPI:
     stream_manager = StreamManager()
     app.state.stream_manager = stream_manager
 
+    @app.get("/api/stream/status")
+    async def stream_status(_: str = Depends(verify_token)):
+        """Return current stream state so the UI can recover after refresh."""
+        return stream_manager._status_message()
+
     @app.websocket("/ws/stream")
     async def websocket_stream(ws: WebSocket):
         # Validate token from query param
@@ -531,8 +627,10 @@ def create_app(data_dir: Path) -> FastAPI:
                         serial = msg.get("serial", "")
                         channels = msg.get("channels", [])
                         await stream_manager.start(serial, channels)
+                        await client_queue.put({"type": "ack", "action": "start", "channels": channels})
                     elif msg_type == "stop":
                         await stream_manager.stop()
+                        await client_queue.put({"type": "ack", "action": "stop"})
             except WebSocketDisconnect:
                 pass
             except Exception as e:

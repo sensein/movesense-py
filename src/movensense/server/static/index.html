@@ -74,6 +74,20 @@
 </head>
 <body>
   <div id="busy-overlay"><div class="busy-msg" id="busy-msg">Working...</div></div>
+  <!-- Confirmation overlay (replaces alert/prompt/confirm) -->
+  <div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;justify-content:center;align-items:center;">
+    <div style="background:white;padding:1.5rem 2rem;border-radius:0.75rem;max-width:400px;width:90%;">
+      <div id="confirm-title" style="font-weight:600;margin-bottom:0.5rem;"></div>
+      <div id="confirm-body" style="font-size:0.85rem;color:#666;margin-bottom:0.75rem;"></div>
+      <div id="confirm-input-wrap" style="display:none;margin-bottom:0.75rem;">
+        <input id="confirm-input" type="text" style="width:100%;padding:0.4rem;font-size:0.85rem;border:1px solid #ddd;border-radius:0.25rem;" autocomplete="off">
+      </div>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+        <button onclick="resolveConfirm(false)" style="padding:0.4rem 1rem;">Cancel</button>
+        <button id="confirm-ok-btn" onclick="resolveConfirm(true)" class="danger" style="padding:0.4rem 1rem;" disabled>Confirm</button>
+      </div>
+    </div>
+  </div>
   <h1>Movensense</h1>
   <div class="tabs">
     <div class="tab active" onclick="switchTab('data')">Data Browser</div>
@@ -114,65 +128,75 @@
     <div id="device-connected-panel" style="display:none">
       <div id="device-info" style="margin:0.75rem 0;"></div>
 
-      <!-- Device Configuration -->
-      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Device Configuration</div>
-      <div id="config-readonly-msg" style="display:none;font-size:0.8rem;color:#f59e0b;margin:0.5rem 0;">
-        ⚠ Device is logging. Stop logging to change configuration.
-      </div>
-      <div id="config-panel">
-        <div id="config-channels" class="config-grid"></div>
+      <!-- Logging Section (collapsible) -->
+      <details id="logging-section" open>
+        <summary style="font-size:0.85rem;font-weight:600;cursor:pointer;margin-bottom:0.5rem;">
+          📼 Logging <span id="logging-indicator" style="display:none;color:#ef4444;font-weight:600;">● Recording</span>
+        </summary>
+
+        <div id="config-readonly-msg" style="display:none;font-size:0.8rem;color:#f59e0b;margin:0.5rem 0;">
+          ⚠ Device is logging. Stop logging to change configuration.
+        </div>
+        <div id="config-panel">
+          <div id="config-channels" class="config-grid"></div>
+          <div class="stream-controls" style="margin-top:0.5rem;">
+            <button onclick="showConfigDiff()" id="btn-apply" disabled style="background:#ccc;color:#666;cursor:not-allowed;">Apply Config</button>
+          </div>
+        </div>
+
+        <!-- Config Change Confirmation Box -->
+        <div id="config-diff-box" style="display:none;margin:0.75rem 0;padding:0.75rem;border:2px solid #f59e0b;border-radius:0.5rem;background:#fffbeb;">
+          <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Pending Configuration Changes</div>
+          <div id="config-diff-content" style="font-size:0.8rem;margin-bottom:0.5rem;"></div>
+          <div class="stream-controls">
+            <input id="config-confirm" type="text" placeholder='Type "confirm" to apply' style="width:200px">
+            <button onclick="applyConfig()" id="btn-config" disabled>Confirm &amp; Apply</button>
+            <button onclick="cancelConfigDiff()">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Logging Control (single toggle) -->
         <div class="stream-controls" style="margin-top:0.5rem;">
-          <button onclick="showConfigDiff()" id="btn-apply" disabled style="background:#ccc;color:#666;cursor:not-allowed;">Apply Changes</button>
+          <button onclick="toggleLogging()" id="btn-toggle-log" disabled title="Start/stop recording">🔴 Record</button>
         </div>
-      </div>
 
-      <!-- Config Change Confirmation Box (hidden until Apply is clicked) -->
-      <div id="config-diff-box" style="display:none;margin:0.75rem 0;padding:0.75rem;border:2px solid #f59e0b;border-radius:0.5rem;background:#fffbeb;">
-        <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Pending Configuration Changes</div>
-        <div id="config-diff-content" style="font-size:0.8rem;margin-bottom:0.5rem;"></div>
+        <!-- Data Management -->
+        <div style="font-size:0.75rem;font-weight:600;margin:0.5rem 0 0.25rem;color:#999;">Data Management</div>
         <div class="stream-controls">
-          <input id="config-confirm" type="text" placeholder='Type "confirm" to apply' style="width:200px">
-          <button onclick="applyConfig()" id="btn-config" disabled>Confirm &amp; Apply</button>
-          <button onclick="cancelConfigDiff()">Cancel</button>
+          <button onclick="fetchLogs()" id="btn-fetch" disabled>Download Logs</button>
+          <button onclick="eraseLogs()" id="btn-erase" class="danger" disabled>Erase Memory</button>
+          <span id="fetch-status" style="font-size:0.8rem;color:#666"></span>
         </div>
-      </div>
+      </details>
 
       <hr style="border-color:var(--border);margin:0.75rem 0">
 
-      <!-- Logging Control -->
-      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Logging Control</div>
-      <div class="stream-controls">
-        <button onclick="startLogging()" id="btn-start-log" disabled title="Start recording to flash">🔴 Record</button>
-        <button onclick="stopLogging()" id="btn-stop-log" class="danger" disabled title="Stop recording">⏹ Stop</button>
-        <span id="logging-indicator" style="display:none;font-size:0.85rem;color:#ef4444;font-weight:600;">● Recording in progress</span>
-      </div>
+      <!-- Live Streaming Section (collapsible) -->
+      <details id="streaming-section" open>
+        <summary style="font-size:0.85rem;font-weight:600;cursor:pointer;margin-bottom:0.5rem;">
+          📡 Live Stream
+        </summary>
 
-      <!-- Data Management -->
-      <div style="font-size:0.85rem;font-weight:600;margin:0.75rem 0 0.5rem;">Data Management</div>
-      <div class="stream-controls">
-        <button onclick="fetchLogs()" id="btn-fetch" disabled>Download Logs</button>
-        <button onclick="eraseLogs()" id="btn-erase" class="danger" disabled>Erase Memory</button>
-        <span id="fetch-status" style="font-size:0.8rem;color:#666"></span>
-      </div>
+        <div id="stream-channels" class="config-grid"></div>
 
-      <hr style="border-color:var(--border);margin:0.75rem 0">
-
-      <!-- Live Streaming -->
-      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">Live Data Stream</div>
-      <div class="stream-controls">
-        <button class="primary" onclick="startStreaming()" id="btn-start" disabled title="Start streaming">▶</button>
-        <button onclick="pauseStreaming()" id="btn-pause" disabled title="Pause" style="display:none">⏸</button>
-        <button class="danger" onclick="stopStreaming()" id="btn-stop" disabled title="Stop streaming">⏹</button>
-        <label>Window:
-          <select id="time-window" onchange="setTimeWindow()">
-            <option value="5">5s</option>
-            <option value="10" selected>10s</option>
-            <option value="30">30s</option>
-            <option value="60">60s</option>
-          </select>
-        </label>
-      </div>
-      <div id="charts"></div>
+        <div class="stream-controls" style="margin-top:0.5rem;">
+          <button class="primary" onclick="startStreaming()" id="btn-start" disabled title="Start streaming">▶</button>
+          <button onclick="pauseStreaming()" id="btn-pause" disabled title="Pause" style="display:none">⏸</button>
+          <button class="danger" onclick="stopStreaming()" id="btn-stop" disabled title="Stop streaming">⏹</button>
+          <label>Buffer:
+            <select id="time-window" onchange="setTimeWindow()">
+              <option value="5">5s</option>
+              <option value="10" selected>10s</option>
+              <option value="30">30s</option>
+              <option value="60">60s</option>
+            </select>
+          </label>
+          <button onclick="chartManager && chartManager.resetZoom()" id="btn-reset-zoom" style="display:none;font-size:0.75rem;">Reset Zoom</button>
+          <span id="stream-zoom-label" style="display:none;font-size:0.75rem;color:#2563eb;"></span>
+        </div>
+        <div style="font-size:0.7rem;color:#999;margin:0.25rem 0;">Drag to zoom X+Y · Scroll wheel to zoom time · Shift+drag to pan (when paused)</div>
+        <div id="charts"></div>
+      </details>
     </div>
   </div>
 
@@ -198,10 +222,10 @@
       return resp.json();
     }
   </script>
-  <script src="/static/channel-viewer.js"></script>
-  <script src="/static/calendar.js"></script>
-  <script src="/static/stream.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/channel-viewer.js?v=20260405r"></script>
+  <script src="/static/calendar.js?v=20260405r"></script>
+  <script src="/static/stream.js?v=20260405r"></script>
+  <script src="/static/app.js?v=20260405r"></script>
   <script>
     // Tab switching
     function switchTab(tab) {
@@ -246,18 +270,22 @@
     // === Live Stream Tab Logic ===
     let streamClient = null;
     let chartManager = null;
-    let connectedSerial = null;
+    let connectedSerial = sessionStorage.getItem('ms_connected_serial') || null;
     let deviceState = null;
     let originalConfig = []; // config paths as read from device
 
-    // MEASUREMENTS is built dynamically from device capabilities on connect
+    // MEASUREMENTS is built dynamically from device capabilities on connect (for logging)
     let MEASUREMENTS = [];
+    // STREAM_MEASUREMENTS tracks what to subscribe to for live streaming
+    let STREAM_MEASUREMENTS = [];
 
     // Fallback measurements if device capabilities can't be read
+    // Uses the 4 independent sensor types as defaults
     const FALLBACK_MEASUREMENTS = [
       { id: 'ecg', label: 'ECG', pathTemplate: '/Meas/Ecg/{rate}/mV', rates: [125, 200, 512], defaultRate: 200 },
-      { id: 'acc', label: 'Accelerometer', pathTemplate: '/Meas/Acc/{rate}', rates: [13, 52, 208], defaultRate: 52 },
-      { id: 'gyro', label: 'Gyroscope', pathTemplate: '/Meas/Gyro/{rate}', rates: [13, 52, 208], defaultRate: 52 },
+      { id: 'imu9', label: 'IMU 9-axis (Acc+Gyro+Mag)', pathTemplate: '/Meas/IMU9/{rate}', rates: [13, 26, 52, 104, 208, 416, 833], defaultRate: 52 },
+      { id: 'temp', label: 'Temperature', pathTemplate: '/Meas/Temp', rates: [], defaultRate: null },
+      { id: 'hr', label: 'Heart Rate', pathTemplate: '/Meas/HR', rates: [], defaultRate: null },
     ];
 
     // Channel dependency rules:
@@ -334,6 +362,104 @@
       enforceIMUDependencies();
     }
 
+    function buildStreamChannels(capabilities) {
+      STREAM_MEASUREMENTS = [];
+      const el = document.getElementById('stream-channels');
+      el.innerHTML = '';
+
+      // Same groups as logging but with stream- prefixed IDs
+      const groups = [
+        { title: 'Independent Sensors', ids: ['ecg', 'imu9', 'temp', 'hr'] },
+        { title: 'IMU Variants', ids: ['imu6', 'imu6m'] },
+        { title: 'Individual IMU Components', ids: ['acc', 'gyro', 'magn'] },
+      ];
+
+      for (const group of groups) {
+        const available = group.ids.filter(id => capabilities[id]?.available);
+        if (available.length === 0) continue;
+
+        el.innerHTML += `<div style="font-size:0.75rem;color:#999;margin:0.5rem 0 0.25rem;font-weight:600">${group.title}</div>`;
+
+        for (const id of available) {
+          const cap = capabilities[id];
+          const isDefault = ['ecg', 'imu9', 'temp', 'hr'].includes(id);
+          const m = {
+            id, label: cap.label || id,
+            pathTemplate: cap.path_template || '',
+            rates: cap.rates || [],
+            defaultRate: cap.rates?.length > 0 ? cap.rates[Math.floor(cap.rates.length / 2)] : null,
+          };
+          STREAM_MEASUREMENTS.push(m);
+
+          let rateHtml = '';
+          if (m.rates.length > 0) {
+            rateHtml = `<select id="srate-${m.id}">${m.rates.map(r =>
+              `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`
+            ).join('')}</select>`;
+          }
+
+          const isComponent = ['acc', 'gyro', 'magn'].includes(id);
+          const note = isComponent ? ' <span style="color:#999;font-size:0.7rem">(included in IMU9)</span>' : '';
+
+          el.innerHTML += `<div class="config-item" id="scfg-item-${m.id}">
+            <label><input type="checkbox" id="scfg-${m.id}" ${isDefault ? 'checked' : ''} onchange="enforceStreamIMUDeps()"> ${m.label}${note} ${cap.unit ? '('+cap.unit+')' : ''}</label>
+            ${rateHtml}
+          </div>`;
+        }
+      }
+
+      if (STREAM_MEASUREMENTS.length === 0) {
+        STREAM_MEASUREMENTS = [...FALLBACK_MEASUREMENTS];
+        STREAM_MEASUREMENTS.forEach(m => {
+          let rateHtml = m.rates.length > 0
+            ? `<select id="srate-${m.id}">${m.rates.map(r => `<option value="${r}" ${r === m.defaultRate ? 'selected' : ''}>${r} Hz</option>`).join('')}</select>`
+            : '';
+          el.innerHTML += `<div class="config-item" id="scfg-item-${m.id}">
+            <label><input type="checkbox" id="scfg-${m.id}" checked> ${m.label}</label>
+            ${rateHtml}
+          </div>`;
+        });
+      }
+
+      enforceStreamIMUDeps();
+    }
+
+    function enforceStreamIMUDeps() {
+      for (const [imuId, components] of Object.entries(IMU_GROUPS)) {
+        const imuChk = document.getElementById(`scfg-${imuId}`);
+        if (!imuChk) continue;
+        for (const comp of components) {
+          const compChk = document.getElementById(`scfg-${comp}`);
+          const compItem = document.getElementById(`scfg-item-${comp}`);
+          if (!compChk || !compItem) continue;
+          if (imuChk.checked) {
+            compChk.checked = false;
+            compChk.disabled = true;
+            compItem.style.opacity = '0.4';
+          } else {
+            compChk.disabled = false;
+            compItem.style.opacity = '1';
+          }
+        }
+      }
+    }
+
+    function getStreamConfig() {
+      const paths = [];
+      STREAM_MEASUREMENTS.forEach(m => {
+        const chk = document.getElementById(`scfg-${m.id}`);
+        if (chk && chk.checked) {
+          let path = m.pathTemplate;
+          if (m.rates.length > 0) {
+            const sel = document.getElementById(`srate-${m.id}`);
+            path = path.replace('{rate}', sel ? sel.value : m.defaultRate);
+          }
+          paths.push(path);
+        }
+      });
+      return paths;
+    }
+
     function handleChannelToggle(id) {
       enforceIMUDependencies();
       onConfigChange();
@@ -363,8 +489,9 @@
       }
     }
 
-    // Show empty panel initially (populated on connect)
+    // Show empty panels initially (populated on connect)
     document.getElementById('config-channels').innerHTML = '<div style="color:#999;font-size:0.8rem">Connect to device to see available measurements</div>';
+    document.getElementById('stream-channels').innerHTML = '<div style="color:#999;font-size:0.8rem">Connect to device to see available channels</div>';
 
     document.getElementById('config-confirm').addEventListener('input', (e) => {
       document.getElementById('btn-config').disabled = e.target.value.trim().toLowerCase() !== 'confirm';
@@ -493,16 +620,22 @@
       document.getElementById('device-connected-panel').style.display = '';
 
       // Device info
+      const FLASH_CAPACITY = 128 * 1024 * 1024; // 128 MB
+      const usedBytes = info.total_log_size_bytes || 0;
+      const usedMB = (usedBytes / (1024 * 1024)).toFixed(1);
+      const pctFree = Math.max(0, 100 - (usedBytes / FLASH_CAPACITY * 100)).toFixed(0);
+      const memColor = info.memory_full ? '#ef4444' : pctFree < 10 ? '#f59e0b' : '#22c55e';
       const memInfo = info.memory_full
-        ? '<span style="color:#ef4444">⚠ Memory FULL — logging stopped</span>'
-        : `Storage: ${(info.total_log_size_bytes / 1024).toFixed(0)} KB used`;
+        ? `<span style="color:#ef4444">⚠ Memory FULL (${usedMB} / 128 MB)</span>`
+        : `<span style="color:${memColor}">Storage: ${usedMB} / 128 MB (${pctFree}% free)</span>`;
       document.getElementById('device-info').innerHTML = `
         <div class="card"><h3>${info.serial}</h3>
         <div class="meta">${info.product_name} v${info.app_version} | Battery: ${info.battery}% | State: ${info.datalogger_state} | ${memInfo}</div></div>`;
 
-      // Build config panel from device capabilities, then set current config
+      // Build config panels from device capabilities
       if (info.capabilities) {
         buildConfigFromCapabilities(info.capabilities);
+        buildStreamChannels(info.capabilities);
       }
       setConfigFromDevice(info.current_config || '');
 
@@ -535,9 +668,11 @@
       }
       document.getElementById('config-diff-box').style.display = 'none';
 
-      // Logging buttons + indicator
-      document.getElementById('btn-start-log').disabled = isLogging;
-      document.getElementById('btn-stop-log').disabled = !isLogging;
+      // Logging toggle button + indicator
+      const logBtn = document.getElementById('btn-toggle-log');
+      logBtn.disabled = false;
+      logBtn.innerHTML = isLogging ? '⏹ Stop Recording' : '🔴 Record';
+      logBtn.className = isLogging ? 'danger' : '';
       document.getElementById('logging-indicator').style.display = isLogging ? '' : 'none';
 
       // Streaming buttons
@@ -558,12 +693,76 @@
       }
     }
 
+    let _pendingAck = null; // resolve function for ack wait
+
+    function _waitForAck(action) {
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => { _pendingAck = null; reject(new Error('timeout')); }, 15000);
+        _pendingAck = (msg) => {
+          if (msg.type === 'ack' && msg.action === action) {
+            clearTimeout(timeout);
+            _pendingAck = null;
+            resolve(msg);
+            return true;
+          }
+          return false;
+        };
+      });
+    }
+
+    function _setupWebSocket() {
+      chartManager = new ChartManager('charts');
+      streamClient = new StreamClient(
+        (msg) => chartManager.addData(msg.channel, msg.values, msg.unit, msg.axes, msg.timestamp),
+        (msg) => {
+          // Handle ack messages
+          if (msg.type === 'ack' && _pendingAck) { _pendingAck(msg); return; }
+          if (msg.type === 'status' && msg.state === 'streaming') { document.getElementById('btn-stop').disabled = false; }
+        },
+        (err) => { document.getElementById('stream-error').style.display = ''; document.getElementById('stream-error').textContent = err; }
+      );
+      streamClient.connect();
+    }
+
+    // Auto-reconnect after page refresh if a stream was active
+    async function _tryReconnect() {
+      const saved = sessionStorage.getItem('ms_connected_serial');
+      if (!saved) return;
+      // Always pre-fill the serial field
+      document.getElementById('stream-serial').value = saved;
+      try {
+        // Check if stream is still active server-side
+        const statusResp = await apiFetch('/stream/status');
+        if (statusResp.state === 'streaming' && statusResp.serial === saved) {
+          // Stream is active — get cached device info and reconnect WebSocket
+          const resp = await fetch('/api/device/connect', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ serial: saved }),
+          });
+          if (resp.ok) {
+            const info = await resp.json();
+            connectedSerial = saved;
+            updateDeviceUI(info);
+            _setupWebSocket();
+            // Show streaming controls
+            document.getElementById('btn-start').style.display = 'none';
+            document.getElementById('btn-pause').style.display = '';
+            document.getElementById('btn-pause').disabled = false;
+            document.getElementById('btn-stop').disabled = false;
+          }
+        }
+      } catch (e) {
+        // Stream not active or connect failed — user can connect manually
+      }
+    }
+
     async function connectDevice() {
       const serial = document.getElementById('stream-serial').value.trim();
       if (!serial) { document.getElementById('stream-error').style.display=''; document.getElementById('stream-error').textContent='Enter a device serial number.'; return; }
 
       document.getElementById('stream-error').style.display = 'none';
-      document.getElementById('stream-state').textContent = 'Connecting...';
+      showBusy('Connecting to device...');
 
       try {
         const resp = await fetch('/api/device/connect', {
@@ -574,17 +773,12 @@
         if (!resp.ok) throw new Error((await resp.json()).detail || 'Connect failed');
         const info = await resp.json();
         connectedSerial = serial;
+        sessionStorage.setItem('ms_connected_serial', serial);
         updateDeviceUI(info);
-
-        // Setup WebSocket for streaming
-        chartManager = new ChartManager('charts');
-        streamClient = new StreamClient(
-          (msg) => chartManager.addData(msg.channel, msg.values),
-          (msg) => { if (msg.type === 'status' && msg.state === 'streaming') { document.getElementById('btn-stop').disabled = false; } },
-          (err) => { document.getElementById('stream-error').style.display = ''; document.getElementById('stream-error').textContent = err; }
-        );
-        streamClient.connect();
+        _setupWebSocket();
+        hideBusy();
       } catch (e) {
+        hideBusy();
         document.getElementById('stream-error').style.display = '';
         document.getElementById('stream-error').textContent = e.message;
         document.getElementById('stream-state').textContent = 'Connection failed';
@@ -634,52 +828,97 @@
       }
     }
 
-    async function startLogging() {
-      try {
-        const resp = await fetch('/api/device/start', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial: connectedSerial }),
-        });
-        if (!resp.ok) throw new Error((await resp.json()).detail || 'Start failed');
-        deviceState = 3;
-        document.getElementById('btn-start-log').disabled = true;
-        document.getElementById('btn-stop-log').disabled = false;
-        document.getElementById('logging-indicator').style.display = '';
-        document.getElementById('stream-state').textContent = 'Connected (Logging)';
-        document.getElementById('stream-state').className = 'stream-status streaming';
-        // Lock config
-        document.getElementById('config-readonly-msg').style.display = '';
-        document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = true);
-        document.getElementById('config-confirm').disabled = true;
-      } catch (e) {
-        document.getElementById('stream-error').style.display = '';
-        document.getElementById('stream-error').textContent = e.message;
-      }
+    // --- Confirmation overlay (no browser dialogs) ---
+    let _confirmResolve = null;
+
+    function showConfirmOverlay(title, body, { requireText = null } = {}) {
+      return new Promise((resolve) => {
+        _confirmResolve = resolve;
+        document.getElementById('confirm-title').textContent = title;
+        document.getElementById('confirm-body').innerHTML = body;
+        const inputWrap = document.getElementById('confirm-input-wrap');
+        const input = document.getElementById('confirm-input');
+        const okBtn = document.getElementById('confirm-ok-btn');
+
+        if (requireText) {
+          inputWrap.style.display = '';
+          input.value = '';
+          input.placeholder = `Type "${requireText}" to confirm`;
+          input.oninput = () => { okBtn.disabled = input.value.trim().toLowerCase() !== requireText; };
+          okBtn.disabled = true;
+        } else {
+          inputWrap.style.display = 'none';
+          okBtn.disabled = false;
+        }
+
+        document.getElementById('confirm-overlay').style.display = 'flex';
+        if (requireText) input.focus();
+      });
     }
 
-    async function stopLogging() {
-      if (!confirm('⚠ Stop active recording?\n\nThis will introduce a gap in the data. Previously recorded data is preserved on the device.\n\nContinue?')) return;
-      try {
-        const resp = await fetch('/api/device/stop', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serial: connectedSerial }),
-        });
-        if (!resp.ok) throw new Error((await resp.json()).detail || 'Stop failed');
-        deviceState = 2;
-        document.getElementById('btn-start-log').disabled = false;
-        document.getElementById('btn-stop-log').disabled = true;
-        document.getElementById('logging-indicator').style.display = 'none';
-        document.getElementById('stream-state').textContent = 'Connected (Ready)';
-        document.getElementById('stream-state').className = 'stream-status idle';
-        // Unlock config
-        document.getElementById('config-readonly-msg').style.display = 'none';
-        document.querySelectorAll('#config-channels input, #config-channels select').forEach(el => el.disabled = false);
-        document.getElementById('config-confirm').disabled = false;
-      } catch (e) {
-        document.getElementById('stream-error').style.display = '';
-        document.getElementById('stream-error').textContent = e.message;
+    function resolveConfirm(ok) {
+      document.getElementById('confirm-overlay').style.display = 'none';
+      if (_confirmResolve) { _confirmResolve(ok); _confirmResolve = null; }
+    }
+
+    // --- Logging toggle ---
+
+    function _setLoggingUI(isLogging) {
+      deviceState = isLogging ? 3 : 2;
+      const logBtn = document.getElementById('btn-toggle-log');
+      logBtn.innerHTML = isLogging ? '⏹ Stop Recording' : '🔴 Record';
+      logBtn.className = isLogging ? 'danger' : '';
+      logBtn.disabled = false;
+      document.getElementById('logging-indicator').style.display = isLogging ? '' : 'none';
+      document.getElementById('stream-state').textContent = isLogging ? 'Connected (Logging)' : 'Connected (Ready)';
+      document.getElementById('stream-state').className = 'stream-status ' + (isLogging ? 'streaming' : 'idle');
+      // Hide config panel while logging, show when stopped
+      document.getElementById('config-panel').style.display = isLogging ? 'none' : '';
+      document.getElementById('config-readonly-msg').style.display = isLogging ? '' : 'none';
+      document.getElementById('config-diff-box').style.display = 'none';
+      // Data management
+      document.getElementById('btn-fetch').disabled = isLogging;
+      document.getElementById('btn-erase').disabled = isLogging;
+    }
+
+    async function toggleLogging() {
+      if (deviceState === 3) {
+        const ok = await showConfirmOverlay(
+          'Stop Recording?',
+          'This will introduce a gap in the data.<br>Previously recorded data is preserved on the device.'
+        );
+        if (!ok) return;
+        showBusy('Stopping recording...');
+        try {
+          const resp = await fetch('/api/device/stop', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ serial: connectedSerial }),
+          });
+          if (!resp.ok) throw new Error((await resp.json()).detail || 'Stop failed');
+          hideBusy();
+          _setLoggingUI(false);
+        } catch (e) {
+          hideBusy();
+          document.getElementById('stream-error').style.display = '';
+          document.getElementById('stream-error').textContent = e.message;
+        }
+      } else {
+        showBusy('Starting recording...');
+        try {
+          const resp = await fetch('/api/device/start', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ serial: connectedSerial }),
+          });
+          if (!resp.ok) throw new Error((await resp.json()).detail || 'Start failed');
+          hideBusy();
+          _setLoggingUI(true);
+        } catch (e) {
+          hideBusy();
+          document.getElementById('stream-error').style.display = '';
+          document.getElementById('stream-error').textContent = e.message;
+        }
       }
     }
 
@@ -710,8 +949,12 @@
 
     async function eraseLogs() {
       if (!connectedSerial) return;
-      const confirmed = prompt('This will permanently erase ALL logged data from the device.\nType "erase" to confirm:');
-      if (confirmed !== 'erase') { document.getElementById('fetch-status').textContent='Erase cancelled.'; return; }
+      const ok = await showConfirmOverlay(
+        'Erase Device Memory',
+        'This will <b>permanently delete ALL logged data</b> from the device.<br>Make sure you have downloaded any data you need.',
+        { requireText: 'erase' }
+      );
+      if (!ok) { document.getElementById('fetch-status').textContent = 'Erase cancelled.'; return; }
 
       const statusEl = document.getElementById('fetch-status');
       showBusy('Erasing device memory...');
@@ -730,34 +973,65 @@
       }
     }
 
-    function startStreaming() {
-      const channels = getSelectedConfig();
+    let _streamPaused = false;
+
+    async function startStreaming() {
+      const channels = getStreamConfig();
       if (!channels.length) {
         document.getElementById('stream-error').style.display = '';
-        document.getElementById('stream-error').textContent = 'Select at least one channel in the configuration panel above.';
+        document.getElementById('stream-error').textContent = 'Select at least one channel in the Stream section.';
         return;
       }
+      showBusy('Connecting to sensors...');
       chartManager.clear();
       document.getElementById('stream-error').style.display = 'none';
+      _streamPaused = false;
+
       streamClient.startStream(connectedSerial, channels);
-      document.getElementById('btn-start').disabled = true;
+      try {
+        await _waitForAck('start');
+      } catch (e) { /* timeout — proceed anyway */ }
+      hideBusy();
+
+      document.getElementById('stream-channels').style.display = 'none';
+      document.getElementById('btn-start').style.display = 'none';
       document.getElementById('btn-pause').disabled = false;
       document.getElementById('btn-pause').style.display = '';
+      document.getElementById('btn-pause').textContent = '⏸';
+      document.getElementById('btn-pause').title = 'Pause';
       document.getElementById('btn-stop').disabled = false;
     }
 
-    let _streamPaused = false;
     function pauseStreaming() {
       _streamPaused = !_streamPaused;
       document.getElementById('btn-pause').textContent = _streamPaused ? '▶' : '⏸';
       document.getElementById('btn-pause').title = _streamPaused ? 'Resume' : 'Pause';
-      // Pause just stops chart updates, WS stays connected
-      if (chartManager) chartManager._paused = _streamPaused;
+      if (chartManager) {
+        chartManager._paused = _streamPaused;
+        if (_streamPaused) {
+          for (const ch of Object.values(chartManager.charts)) {
+            if (ch.data[0].length > 0 && chartManager._zoomEnd == null) {
+              chartManager._zoomEnd = ch.data[0][ch.data[0].length - 1];
+              break;
+            }
+          }
+        } else {
+          chartManager._zoomEnd = null;
+        }
+      }
     }
 
-    function stopStreaming() {
+    async function stopStreaming() {
+      showBusy('Stopping stream...');
       if (streamClient) streamClient.stopStream();
+      try {
+        await _waitForAck('stop');
+      } catch (e) { /* timeout — proceed anyway */ }
+      hideBusy();
+
       _streamPaused = false;
+      document.getElementById('stream-channels').style.display = '';
+      document.getElementById('btn-start').style.display = '';
       document.getElementById('btn-start').disabled = false;
       document.getElementById('btn-pause').disabled = true;
       document.getElementById('btn-pause').style.display = 'none';
@@ -767,6 +1041,9 @@
     function setTimeWindow() {
       if (chartManager) chartManager.setWindow(parseInt(document.getElementById('time-window').value));
     }
+
+    // On page load: try to reconnect to an active stream
+    _tryReconnect();
   </script>
 </body>
 </html>
