@@ -160,6 +160,48 @@ class TestMultiStream:
         assert abs(data[0] - 72.0) < 0.01
 
 
+class TestTimestampMappingExtraction:
+    """Test that /Time/Detailed mapping is correctly stored and enables UTC conversion."""
+
+    def test_timestamp_mapping_utc_conversion(self, sample_ecg_json, tmp_path):
+        from movesense.storage import DeviceStore, device_ts_to_utc
+        device_dir = tmp_path / "device"
+        device_dir.mkdir()
+        ds = DeviceStore(device_dir)
+        ds.open()
+        group = ds.add_session(0)
+        convert_json_to_zarr(sample_ecg_json, None, device_serial="TEST001", session_group=group)
+
+        mapping = dict(ds.root["0"].attrs["timestamp_mapping"])
+        # sample_ecg_json has relativeTime=1000 (ms) → 1000000 (µs), utcTime=1712000000000000
+        assert mapping["relative_time_us"] == 1000 * 1000  # ms → µs
+        assert mapping["utc_time_us"] == 1712000000000000
+
+        # A stored timestamp of 1050000 µs (= 1050 ms device time)
+        # should convert to utc_time_us + (1050000 - 1000000) = 1712000000000000 + 50000
+        utc = device_ts_to_utc(1_050_000, mapping)
+        assert utc == 1_712_000_000_050_000
+
+    def test_session_without_time_detailed(self, tmp_path):
+        """Sessions without /Time/Detailed should still work (no mapping)."""
+        data = {"Samples": [
+            {"MeasEcgmV": {"Timestamp": 0, "Samples": [0.1, 0.2]}},
+        ]}
+        json_path = tmp_path / "no_time.json"
+        json_path.write_text(json.dumps(data))
+
+        from movesense.storage import DeviceStore
+        device_dir = tmp_path / "device"
+        device_dir.mkdir()
+        ds = DeviceStore(device_dir)
+        ds.open()
+        group = ds.add_session(0)
+        convert_json_to_zarr(json_path, None, device_serial="TEST001", session_group=group)
+        attrs = dict(ds.root["0"].attrs)
+        # No timestamp_mapping since no TimeDetailed
+        assert attrs.get("timestamp_mapping", {}).get("utc_time_us", 0) == 0
+
+
 class TestDeviceStoreConversion:
     """Test converting JSON into a session group within a DeviceStore."""
 

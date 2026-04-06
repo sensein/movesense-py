@@ -23,7 +23,12 @@ class DataScanner:
         self._index: dict[str, dict] = {}  # serial -> {dates -> {date -> [sessions]}}
 
     def scan(self) -> None:
-        """Scan the data directory and rebuild the index."""
+        """Scan the data directory and rebuild the index.
+
+        Supports two layouts:
+        1. New: {serial}/data.zarr with indexed session groups (preferred)
+        2. Legacy: {serial}/{date}/Movesense_log_{id}_{serial}.zarr (per-session)
+        """
         self.devices = []
         self._index = {}
 
@@ -38,17 +43,62 @@ class DataScanner:
             serial = serial_dir.name
             dates = []
 
-            for date_dir in sorted(serial_dir.iterdir()):
-                if not date_dir.is_dir() or not re.match(r"\d{4}-\d{2}-\d{2}$", date_dir.name):
-                    continue
+            # Check for new DeviceStore layout first
+            device_store_path = serial_dir / "data.zarr"
+            if device_store_path.exists():
+                dates = self._scan_device_store(serial, device_store_path)
+            else:
+                # Legacy: scan per-date directories
+                for date_dir in sorted(serial_dir.iterdir()):
+                    if not date_dir.is_dir() or not re.match(r"\d{4}-\d{2}-\d{2}$", date_dir.name):
+                        continue
 
-                sessions = self._scan_sessions(date_dir)
-                if sessions:
-                    dates.append(date_dir.name)
-                    self._index.setdefault(serial, {})[date_dir.name] = sessions
+                    sessions = self._scan_sessions(date_dir)
+                    if sessions:
+                        dates.append(date_dir.name)
+                        self._index.setdefault(serial, {})[date_dir.name] = sessions
 
             if dates:
                 self.devices.append({"serial": serial, "date_count": len(dates)})
+
+    def _scan_device_store(self, serial: str, store_path: Path) -> list[str]:
+        """Index sessions from a DeviceStore (data.zarr with session groups)."""
+        dates = []
+        try:
+            root = zarr.open_group(str(store_path), mode="r")
+            sessions_idx = dict(root.attrs.get("sessions", {}))
+
+            for idx_str, summary in sorted(sessions_idx.items(), key=lambda x: int(x[0])):
+                idx = int(idx_str)
+                start_utc = summary.get("start_utc", "")
+                date_str = start_utc[:10] if len(start_utc) >= 10 else "unknown"
+
+                # Extract channel details from the session group
+                try:
+                    group = root[idx_str]
+                    channels = self._extract_channels(group)
+                except Exception:
+                    channels = []
+
+                session = {
+                    "log_id": idx,
+                    "zarr_path": str(store_path),
+                    "zarr_session_index": idx,
+                    "channels": [c["name"] for c in channels],
+                    "channel_details": channels,
+                    "root_attrs": dict(summary),
+                    "has_csv": False,
+                    "has_json": False,
+                }
+
+                self._index.setdefault(serial, {}).setdefault(date_str, []).append(session)
+                if date_str not in dates:
+                    dates.append(date_str)
+
+        except Exception as e:
+            log.warning(f"Error reading DeviceStore {store_path}: {e}")
+
+        return sorted(dates)
 
     def _scan_sessions(self, date_dir: Path) -> list[dict]:
         """Scan a date directory for Zarr log sessions."""
@@ -148,6 +198,10 @@ class DataScanner:
 
         try:
             store = zarr.open_group(session["zarr_path"], mode="r")
+            # DeviceStore: navigate to session group first
+            if "zarr_session_index" in session:
+                store = store[str(session["zarr_session_index"])]
+
             if channel_name not in store:
                 return None
 
@@ -161,10 +215,7 @@ class DataScanner:
             chunk = arr[offset:end]
 
             # Convert to list (handle multi-dimensional)
-            if chunk.ndim == 1:
-                data = chunk.tolist()
-            else:
-                data = chunk.tolist()  # list of lists for 2D+
+            data = chunk.tolist()
 
             result = {
                 "channel": channel_name,
@@ -266,6 +317,9 @@ class DataScanner:
 
         try:
             store = zarr.open_group(session["zarr_path"], mode="r")
+            # DeviceStore: navigate to session group first
+            if "zarr_session_index" in session:
+                store = store[str(session["zarr_session_index"])]
             if channel_name not in store:
                 return None
             group = store[channel_name]

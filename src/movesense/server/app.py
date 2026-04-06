@@ -114,7 +114,13 @@ def create_app(data_dir: Path) -> FastAPI:
         channels = scanner.get_channels(serial, date, log_id)
         if channels is None:
             raise HTTPException(404, detail=f"Session not found: log {log_id}")
-        return {"channels": channels}
+        result = {"channels": channels}
+        # Include rich session metadata if available
+        meta = scanner.get_session_metadata(serial, date, log_id) or {}
+        for key in ("timestamp_mapping", "firmware_version", "device_serial", "channels"):
+            if key in meta and key != "channels":  # avoid collision with channel list
+                result[key] = meta[key]
+        return result
 
     @app.get("/api/devices/{serial}/dates/{date}/sessions/{log_id}/channels/{channel_name}/data")
     async def get_channel_data(
