@@ -55,8 +55,9 @@ Movesense_ECG_datalogger_gui_internal/
 # Ignore CSV files
 *.csv
 
-# Ignore JSON files
+# Ignore JSON files (except test fixtures)
 *.json
+!tests/fixtures/**/*.json
 
 # Ignore sbem files
 *.sbem

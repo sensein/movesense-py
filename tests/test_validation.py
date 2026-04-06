@@ -12,11 +12,16 @@ import pytest
 from movensense.protocol import parse_subscription_packet
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "validation"
+FIXTURE_FILE = FIXTURE_DIR / "fixture.json"
+
+pytestmark = pytest.mark.skipif(
+    not FIXTURE_FILE.exists(), reason="Validation fixture not available"
+)
 
 
 @pytest.fixture
 def fixture():
-    with open(FIXTURE_DIR / "fixture.json") as f:
+    with open(FIXTURE_FILE) as f:
         return json.load(f)
 
 

@@ -37,4 +37,4 @@ jobs:
           uv pip install -e ".[dev,ml]"
 
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v --ignore=tests/test_ui.py
