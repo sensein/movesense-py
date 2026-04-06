@@ -115,7 +115,7 @@ async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
     """
     import subprocess
     from .json2zarr import convert_json_to_zarr
-    from .storage import BlobStore, ProvLog
+    from .storage import BlobStore, DeviceStore, ProvLog
 
     sbem2json_path = Path(__file__).parent.parent.parent / "sbem2json"
     if not sbem2json_path.exists():
@@ -131,6 +131,8 @@ async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
 
     blob_store = BlobStore(device_dir)
     prov = ProvLog(device_dir)
+    device_store = DeviceStore(device_dir)
+    device_store.open()
 
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
@@ -193,42 +195,69 @@ async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
                     prov.record(blob_hash, sbem_file.name, serial, log_id, -1, [], "error", sbem_file.stat().st_size)
                     continue
 
-                # Step 4: Convert JSON → Zarr v3 (legacy per-session store for now)
-                click.echo(f"  Converting log {log_id}: JSON → Zarr v3")
-                convert_json_to_zarr(json_file, zarr_path, device_serial=serial)
+                # Step 4: Convert JSON → session group in DeviceStore
+                session_idx = device_store.next_session_index()
+                session_group = device_store.add_session(session_idx)
+                click.echo(f"  Converting log {log_id}: JSON → Zarr session {session_idx}")
+                convert_json_to_zarr(
+                    json_file, None,
+                    device_serial=serial,
+                    session_group=session_group,
+                    source_blob_hash=blob_hash,
+                )
 
-                # Step 5: Write provenance record
-                # Extract channel names from the Zarr store
-                import zarr
-                try:
-                    store = zarr.open_group(str(zarr_path), mode="r")
-                    channels = [name for name in store]
-                except Exception:
-                    channels = []
+                # Step 5: Update sessions index with channel metadata
+                channels_meta = dict(session_group.attrs.get("channels", {}))
+                ts_mapping = dict(session_group.attrs.get("timestamp_mapping", {}))
 
+                # Compute UTC start/end from timestamp mapping + channel data
+                summary = {
+                    "channels": channels_meta,
+                }
+                if ts_mapping:
+                    summary["start_utc_us"] = ts_mapping.get("utc_time_us", 0)
+                    # Estimate duration from highest-rate channel
+                    max_samples = max((m.get("samples", 0) for m in channels_meta.values()), default=0)
+                    max_rate = max((m.get("rate_hz", 1) for m in channels_meta.values()), default=1)
+                    duration_s = max_samples / max_rate if max_rate > 0 else 0
+                    summary["duration_seconds"] = round(duration_s, 3)
+                    summary["end_utc_us"] = summary["start_utc_us"] + int(duration_s * 1_000_000)
+                    # ISO strings with µs precision
+                    from datetime import datetime, timezone
+                    start_dt = datetime.fromtimestamp(summary["start_utc_us"] / 1_000_000, tz=timezone.utc)
+                    end_dt = datetime.fromtimestamp(summary["end_utc_us"] / 1_000_000, tz=timezone.utc)
+                    summary["start_utc"] = start_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    summary["end_utc"] = end_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+                device_store.update_sessions_index(session_idx, summary)
+
+                # Step 6: Write provenance record
                 prov.record(
                     blob_hash, sbem_file.name, serial, log_id,
-                    session_index=log_id - 1,  # 0-indexed
-                    channels=channels,
+                    session_index=session_idx,
+                    channels=list(channels_meta.keys()),
                     status="ok",
                     file_size_bytes=sbem_file.stat().st_size,
                 )
-                click.echo(f"  Stored blob {blob_hash[:12]}... → session {log_id - 1}")
+                click.echo(f"  Stored blob {blob_hash[:12]}... → session {session_idx}")
 
-                # Step 6: Clean up intermediates (keep SBEM blob + Zarr only)
-                if json_file.exists():
-                    json_file.unlink()
-                    click.echo(f"  Cleaned up intermediate JSON")
-                # Clean up any CSV files for this log
-                for csv in output_dir.glob(f"Movesense_log_{log_id}_{serial}*.csv"):
-                    csv.unlink()
+                # Step 7: Clean up intermediates (keep SBEM blob + Zarr only)
+                # Verify Zarr group was written correctly before deleting
+                if session_group and len(list(channels_meta.keys())) > 0:
+                    if json_file.exists():
+                        json_file.unlink()
+                    for csv in output_dir.glob(f"Movesense_log_{log_id}_{serial}*.csv"):
+                        csv.unlink()
+                    click.echo(f"  Cleaned up intermediates")
 
                 fetched_files.append(str(sbem_file))
 
+            device_store.close()
             await sensor.set_system_mode(5)
             return {"success": True, "files": fetched_files, "output_dir": str(output_dir)}
 
     except Exception as e:
+        device_store.close()
         return {"success": False, "error": str(e)}
 
 

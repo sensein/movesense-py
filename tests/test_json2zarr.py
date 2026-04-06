@@ -160,6 +160,84 @@ class TestMultiStream:
         assert abs(data[0] - 72.0) < 0.01
 
 
+class TestDeviceStoreConversion:
+    """Test converting JSON into a session group within a DeviceStore."""
+
+    def test_convert_to_session_group(self, sample_ecg_json, tmp_path):
+        from movesense.storage import DeviceStore
+        device_dir = tmp_path / "device"
+        device_dir.mkdir()
+        ds = DeviceStore(device_dir)
+        ds.open()
+        group = ds.add_session(0)
+        convert_json_to_zarr(sample_ecg_json, None, device_serial="TEST001", session_group=group)
+        assert "MeasEcgmV" in ds.root["0"]
+        ecg = ds.root["0"]["MeasEcgmV"]
+        assert ecg["data"][:].shape == (15,)
+
+    def test_session_group_has_timestamp_mapping(self, sample_ecg_json, tmp_path):
+        from movesense.storage import DeviceStore
+        device_dir = tmp_path / "device"
+        device_dir.mkdir()
+        ds = DeviceStore(device_dir)
+        ds.open()
+        group = ds.add_session(0)
+        convert_json_to_zarr(sample_ecg_json, None, device_serial="TEST001", session_group=group)
+        attrs = dict(ds.root["0"].attrs)
+        assert "timestamp_mapping" in attrs
+        mapping = attrs["timestamp_mapping"]
+        assert "relative_time_us" in mapping
+        assert "utc_time_us" in mapping
+
+    def test_session_group_has_channel_metadata(self, sample_multi_json, tmp_path):
+        from movesense.storage import DeviceStore
+        device_dir = tmp_path / "device"
+        device_dir.mkdir()
+        ds = DeviceStore(device_dir)
+        ds.open()
+        group = ds.add_session(0)
+        convert_json_to_zarr(sample_multi_json, None, device_serial="TEST001", session_group=group)
+        attrs = dict(ds.root["0"].attrs)
+        assert "channels" in attrs
+        assert "MeasEcgmV" in attrs["channels"]
+        assert "MeasTemp" in attrs["channels"]
+
+    def test_timestamps_normalized_to_us(self, sample_ecg_json, tmp_path):
+        from movesense.storage import DeviceStore
+        device_dir = tmp_path / "device"
+        device_dir.mkdir()
+        ds = DeviceStore(device_dir)
+        ds.open()
+        group = ds.add_session(0)
+        convert_json_to_zarr(sample_ecg_json, None, device_serial="TEST001", session_group=group)
+        ts = ds.root["0"]["MeasEcgmV"]["timestamps"][:]
+        # Original timestamps were 0, 25, 50 (ms) → should be 0, 25000, 50000 (µs)
+        assert ts[0] == 0
+        assert ts[1] == 25000
+        assert ts[2] == 50000
+
+    def test_two_sessions_different_channels(self, sample_ecg_json, sample_multi_json, tmp_path):
+        from movesense.storage import DeviceStore
+        device_dir = tmp_path / "device"
+        device_dir.mkdir()
+        ds = DeviceStore(device_dir)
+        ds.open()
+
+        g0 = ds.add_session(0)
+        convert_json_to_zarr(sample_ecg_json, None, device_serial="TEST001", session_group=g0)
+
+        g1 = ds.add_session(1)
+        convert_json_to_zarr(sample_multi_json, None, device_serial="TEST001", session_group=g1)
+
+        # Session 0: only ECG
+        assert "MeasEcgmV" in ds.root["0"]
+        assert "MeasTemp" not in ds.root["0"]
+        # Session 1: ECG + Temp + HR
+        assert "MeasEcgmV" in ds.root["1"]
+        assert "MeasTemp" in ds.root["1"]
+        assert "MeasHR" in ds.root["1"]
+
+
 class TestEdgeCases:
     def test_empty_samples_raises(self, tmp_path):
         path = tmp_path / "empty.json"
