@@ -1,4 +1,4 @@
-"""Shared test fixtures for movensense tests."""
+"""Shared test fixtures for movesense tests."""
 
 import json
 from pathlib import Path

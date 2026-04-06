@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import zarr
 
-from movensense.json2zarr import convert_json_to_zarr
+from movesense.json2zarr import convert_json_to_zarr
 
 
 @pytest.fixture

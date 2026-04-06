@@ -1,101 +1,130 @@
-# Movensense
+# movesense-py
 
-Python toolkit for Movesense BLE sensor devices — data collection, real-time streaming, visualization, and physics-based signal analysis.
+Python toolkit for [Movesense](https://www.movesense.com/) BLE sensor devices — data collection, real-time streaming, visualization, and physics-based signal analysis.
 
-## Features
+## What You Need
 
-- **CLI** (`movensense`): Device management, data collection, Zarr v3 storage
-- **Data Server** (`movensense serve`): REST API + browser UI for browsing collected data
-- **Live Streaming**: WebSocket-based real-time sensor data with browser charts
-- **Calendar View**: Monthly data coverage with color-coded days
-- **Multi-Scale Time Series**: Synchronized zoom/pan across channels with downsampling
-- **Physio Library**: Physics-based and ML signal processing algorithms
-- **Event Labeling**: Automatic and manual annotation of physiological events
+- **Hardware**: A [Movesense sensor](https://www.movesense.com/product/movesense-sensor/) (HR+, Medical, or Active)
+- **Computer**: macOS, Linux, or Windows with Bluetooth Low Energy support
+- **Python**: 3.11 or newer
+- **Package manager**: [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ## Installation
 
 ```bash
-# Core (BLE + data collection + server)
-uv pip install -e .
+git clone https://github.com/sensein/movesense-py.git
+cd movesense-py
 
-# With ML models (PyTorch, scikit-learn)
+# Install with uv (recommended)
+uv venv && uv pip install -e .
+
+# Or with pip
+pip install -e .
+
+# Optional: ML models (PyTorch, scikit-learn)
 uv pip install -e ".[ml]"
-
-# Development
-uv pip install -e ".[dev,ml]"
 ```
 
-Requires Python 3.11+ and a BLE-capable machine. Set your device serial in `.env`:
+Find your device serial number (printed on the sensor, or visible in the Movesense Showcase app) and save it:
 
-```
-MSN=254830002158
+```bash
+echo "MSN=YOUR_SERIAL_HERE" > .env
 ```
 
 ## Quick Start
 
+### 1. Check device connection
+
 ```bash
-# Check device status (reads MSN from .env)
-movensense status
-
-# Configure and start logging (no channel limit)
-movensense config /Meas/Ecg/200/mV /Meas/Acc/52 /Meas/Gyro/52 /Meas/Temp /Meas/HR
-movensense start
-
-# Stream live data while logging
-movensense live /Meas/Ecg/200/mV -d 30
-
-# Stop and fetch data → Zarr v3 + CSV
-movensense stop
-movensense fetch
-
-# Start the data server (API + browser UI)
-movensense serve
+movesense status
 ```
 
-Data is saved to `~/dbp/data/movesense/{serial}/{date}/`.
+This shows battery level, firmware version, and whether the device is logging.
 
-## CLI Commands
+### 2. Record data
+
+```bash
+# Configure which sensors to log
+movesense config /Meas/Ecg/200/mV /Meas/IMU9/52 /Meas/Temp /Meas/HR
+
+# Start recording to device flash
+movesense start
+
+# ... wear the sensor ...
+
+# Stop and download
+movesense stop
+movesense fetch
+```
+
+Data is saved to `~/dbp/data/movesense/{serial}/{date}/` as Zarr v3 + CSV.
+
+### 3. View data in browser
+
+```bash
+movesense serve
+```
+
+Opens a web UI at `http://127.0.0.1:8585` with:
+- **Data Browser**: Navigate devices → dates → sessions → channel charts
+- **Calendar**: Monthly recording coverage
+- **Live Stream**: Real-time charts via WebSocket while recording
+
+### 4. Stream live data
+
+```bash
+# Stream ECG to terminal for 30 seconds
+movesense live /Meas/Ecg/200/mV -d 30
+```
+
+Or use the browser UI's Live Stream tab for real-time multi-channel visualization with synchronized zoom/pan.
+
+## CLI Reference
 
 | Command | Description |
 |---------|-------------|
-| `status` | Device info, battery, datalogger state |
-| `config <paths...>` | Configure measurement channels |
-| `start` | Start logging to flash |
-| `stop` | Stop logging, reboot device |
-| `fetch` | Download data → SBEM → JSON → Zarr v3 + CSV |
-| `live <paths...>` | Real-time BLE data streaming |
-| `erase` | Erase device memory (with confirmation) |
-| `serve` | Start data server (API + browser UI) |
+| `movesense status` | Device info, battery, datalogger state |
+| `movesense config <paths...>` | Configure measurement channels |
+| `movesense start` | Start logging to device flash |
+| `movesense stop` | Stop logging |
+| `movesense fetch` | Download data → SBEM → JSON → Zarr v3 + CSV |
+| `movesense live <paths...> [-d sec]` | Real-time BLE data streaming |
+| `movesense erase` | Erase device memory (with confirmation) |
+| `movesense serve [--port N] [--data-dir PATH]` | Start data server |
 
 All commands accept `-s <serial>` or read `MSN` from `.env`. Use `-V` for verbose logging.
+
+## Available Sensors
+
+| Path | Rates (Hz) | Description |
+|------|-----------|-------------|
+| `/Meas/Ecg/{rate}/mV` | 125, 200, 250, 500, 512 | ECG in millivolts |
+| `/Meas/Acc/{rate}` | 13, 26, 52, 104, 208, 416, 833 | Accelerometer (x, y, z) |
+| `/Meas/Gyro/{rate}` | 13, 26, 52, 104, 208, 416, 833 | Gyroscope (x, y, z) |
+| `/Meas/Magn/{rate}` | 13, 26, 52, 104, 208 | Magnetometer (x, y, z) |
+| `/Meas/IMU6/{rate}` | same as Acc | Accelerometer + Gyroscope |
+| `/Meas/IMU9/{rate}` | same as Acc | Acc + Gyro + Magnetometer |
+| `/Meas/Temp` | ~1 | Temperature (Kelvin) |
+| `/Meas/HR` | event-driven | Heart rate (bpm) + RR intervals |
 
 ## Data Server
 
 ```bash
-# Start with defaults (port 8585, reads from ~/dbp/data/movesense/)
-movensense serve
+# Default: port 8585, reads from ~/dbp/data/movesense/
+movesense serve
 
 # Custom port and data directory
-movensense serve --port 9000 --data-dir /path/to/data
+movesense serve --port 9000 --data-dir /path/to/data
 
-# Bind to all interfaces (e.g., for LAN access)
-movensense serve --host 0.0.0.0
+# LAN access
+movesense serve --host 0.0.0.0
 ```
 
-The server prints a URL with an auth token on startup — open it in your browser. API docs are at `/docs` (auto-generated by FastAPI).
-
-Features:
-
-- **Data Browser**: Navigate devices → dates → sessions → channels
-- **Calendar**: Monthly view with data coverage color-coding (green ≥8h, yellow partial)
-- **Time Series**: Synchronized multi-channel charts with zoom/pan and downsampling
-- **Live Stream**: Real-time uPlot charts via WebSocket during active recording
-
-All options: `movensense serve --help`.
+The server prints a URL with an auth token on startup. API docs at `/docs` (auto-generated by FastAPI).
 
 ## Physio Library
 
-Reusable signal processing algorithms at `src/movensense/physio/`. Designed to be portable to [senselab](https://github.com/sensein/senselab).
+Reusable signal processing algorithms at `src/movesense/physio/`. Designed to be portable to [senselab](https://github.com/sensein/senselab).
 
 ### Classical Algorithms
 
@@ -122,45 +151,13 @@ Reusable signal processing algorithms at `src/movensense/physio/`. Designed to b
 
 See [docs/sota-physio-ml.md](docs/sota-physio-ml.md) for research references and cross-domain applications.
 
-## Project Structure
-
-```
-src/movensense/
-├── cli.py                 # Click CLI entry point
-├── sensor.py              # BLE protocol (GSP over GATT)
-├── json2zarr.py           # JSON → Zarr v3 conversion
-├── json2csv.py            # JSON → CSV conversion
-├── csv2edf.py             # CSV → EDF+ conversion (optional)
-├── server/
-│   ├── app.py             # FastAPI server + WebSocket
-│   ├── auth.py            # Token authentication
-│   ├── scanner.py         # Data directory indexing
-│   ├── stream.py          # BLE → WebSocket bridge
-│   └── static/            # Browser UI (HTML/JS/CSS)
-└── physio/
-    ├── dsp.py             # Standard DSP functions
-    ├── ecg.py             # ECG processing
-    ├── motion.py          # Motion analysis
-    ├── quality.py         # Signal quality
-    ├── orientation.py     # IMU orientation
-    ├── segmentation.py    # Change-point detection
-    ├── pipeline.py        # Multi-stream orchestrator
-    ├── events.py          # Event model
-    └── learned/           # PyTorch models
-        ├── ssm.py         # State-space models
-        ├── causal.py      # Causal discovery
-        ├── multimodal.py  # Cross-modal fusion
-        ├── pinn.py        # Physics-informed NNs
-        └── symbolic.py    # KAN / equation discovery
-```
-
 ## Testing
 
 ```bash
-python -m pytest tests/ -v
+uv run python -m pytest tests/ -v
 ```
 
-151 tests covering CLI, Zarr conversion, server API, scanner, WebSocket, ECG processing, motion analysis, events, segmentation, and all learned models.
+171+ tests covering CLI, Zarr conversion, server API, scanner, WebSocket, ECG processing, motion analysis, events, segmentation, protocol validation, and all learned models.
 
 ## Documentation
 
@@ -169,4 +166,4 @@ python -m pytest tests/ -v
 
 ## License
 
-Original Movesense Python datalogger tool by Movesense/Suunto. New code in this fork is under development. See upstream: https://bitbucket.org/movesense/python-datalogger-tool
+Original Movesense Python datalogger tool by Movesense/Suunto. Extended with server, physio library, and ML models. See upstream: https://bitbucket.org/movesense/python-datalogger-tool

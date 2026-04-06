@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from movensense.physio.pipeline import analyze_session
+from movesense.physio.pipeline import analyze_session
 
 
 def _make_streams():

@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from movensense.physio.motion import classify_activity, detect_posture_changes, detect_motion_artifacts
+from movesense.physio.motion import classify_activity, detect_posture_changes, detect_motion_artifacts
 
 
 class TestActivityClassification:

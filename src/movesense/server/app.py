@@ -484,9 +484,9 @@ def create_app(data_dir: Path) -> FastAPI:
     ):
         """Compute physio analytics for a time window."""
         import numpy as np
-        from movensense.physio.pipeline import analyze_session
-        from movensense.physio.ecg import detect_r_peaks, compute_rr_intervals, compute_hrv
-        from movensense.physio.quality import ecg_signal_quality
+        from movesense.physio.pipeline import analyze_session
+        from movesense.physio.ecg import detect_r_peaks, compute_rr_intervals, compute_hrv
+        from movesense.physio.quality import ecg_signal_quality
 
         sessions = scanner.get_sessions(serial, date)
         if not sessions:
@@ -563,7 +563,7 @@ def create_app(data_dir: Path) -> FastAPI:
             # Activity classification for ACC
             if chunk.ndim == 2 and chunk.shape[1] >= 3:
                 try:
-                    from movensense.physio.motion import classify_activity
+                    from movesense.physio.motion import classify_activity
                     labels = classify_activity(chunk, rate)
                     if len(labels) > 0:
                         activity_pct = round(float(100 * sum(1 for l in labels if l == "activity") / len(labels)), 1)

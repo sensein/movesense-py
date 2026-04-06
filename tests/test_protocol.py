@@ -4,7 +4,7 @@ import struct
 import numpy as np
 import pytest
 
-from movensense.protocol import (
+from movesense.protocol import (
     ParsedPacket, SensorCapability,
     identify_format, parse_subscription_packet, parse_info_response,
 )

@@ -23,7 +23,7 @@ except ImportError:
 
 def _require_torch():
     if not HAS_TORCH:
-        raise ImportError("PyTorch required: pip install 'movensense[ml]'")
+        raise ImportError("PyTorch required: pip install 'movesense[ml]'")
 
 
 # --- PirateNet: Physics-informed Residual Adaptive Network ---

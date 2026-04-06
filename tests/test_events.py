@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from movensense.physio.events import Event, EventStore
+from movesense.physio.events import Event, EventStore
 
 
 class TestEventModel:

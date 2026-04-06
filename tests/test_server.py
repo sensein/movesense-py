@@ -6,14 +6,14 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from movensense.server.app import create_app
-from movensense.server.auth import set_active_token
+from movesense.server.app import create_app
+from movesense.server.auth import set_active_token
 
 
 @pytest.fixture
 def client(fake_data_dir):
     """Create a test client with fake data and a known token."""
-    with patch("movensense.server.auth.get_or_create_token", return_value="testtoken123"):
+    with patch("movesense.server.auth.get_or_create_token", return_value="testtoken123"):
         app = create_app(fake_data_dir)
     set_active_token("testtoken123")
     return TestClient(app)
@@ -26,7 +26,7 @@ def auth_headers():
 
 @pytest.fixture
 def corrupted_client(corrupted_data_dir):
-    with patch("movensense.server.auth.get_or_create_token", return_value="testtoken123"):
+    with patch("movesense.server.auth.get_or_create_token", return_value="testtoken123"):
         app = create_app(corrupted_data_dir)
     set_active_token("testtoken123")
     return TestClient(app)

@@ -1,6 +1,6 @@
 """Tests for data directory scanner."""
 
-from movensense.server.scanner import DataScanner
+from movesense.server.scanner import DataScanner
 
 
 class TestDataScanner:

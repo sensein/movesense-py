@@ -21,7 +21,7 @@ async function showDevices() {
   try {
     const data = await apiFetch('/devices');
     if (!data.devices.length) {
-      content.innerHTML = '<div class="empty">No data collected yet. Run <code>movensense fetch</code> first.</div>';
+      content.innerHTML = '<div class="empty">No data collected yet. Run <code>movesense fetch</code> first.</div>';
       return;
     }
     content.innerHTML = data.devices.map(d => `

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from movensense.protocol import parse_subscription_packet
+from movesense.protocol import parse_subscription_packet
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "validation"
 FIXTURE_FILE = FIXTURE_DIR / "fixture.json"

@@ -1,5 +1,5 @@
 [project]
-name = "movensense"
+name = "movesense"
 version = "2026.04.04"
 description = "Python toolkit for Movesense BLE sensor devices"
 readme = "README.md"
@@ -41,10 +41,10 @@ dev = [
 ]
 
 [project.scripts]
-movensense = "movensense.cli:main"
+movesense = "movesense.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/movensense"]
+packages = ["src/movesense"]
 
 [build-system]
 requires = ["hatchling"]

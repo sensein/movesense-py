@@ -1,6 +1,6 @@
 """Browser UI tests using Playwright.
 
-Requires a running server: `movensense serve`
+Requires a running server: `movesense serve`
 Run with: pytest tests/test_ui.py -v --headed (to see browser)
 """
 
@@ -28,15 +28,15 @@ def server(fake_data_dir_module):
     import threading
     import uvicorn
 
-    from movensense.server.app import create_app
-    from movensense.server.auth import set_active_token
+    from movesense.server.app import create_app
+    from movesense.server.auth import set_active_token
 
     # Find free port
     with socket.socket() as s:
         s.bind(("", 0))
         port = s.getsockname()[1]
 
-    with patch("movensense.server.auth.get_or_create_token", return_value="testtoken"):
+    with patch("movesense.server.auth.get_or_create_token", return_value="testtoken"):
         app = create_app(fake_data_dir_module)
     set_active_token("testtoken")
 

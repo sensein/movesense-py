@@ -119,7 +119,7 @@ async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
             if status.get("dlstate") == 3:
                 return {
                     "success": False,
-                    "error": "Device is currently logging. Stop logging first (`movensense stop`), then fetch.",
+                    "error": "Device is currently logging. Stop logging first (`movesense stop`), then fetch.",
                 }
 
             logs = await sensor.get_log_list()
@@ -306,7 +306,7 @@ def status(serial_numbers):
 def config(serial_numbers, paths):
     """Configure measurement paths.
 
-    Pass paths as arguments: movensense config /Meas/Ecg/200/mV /Meas/Acc/52
+    Pass paths as arguments: movesense config /Meas/Ecg/200/mV /Meas/Acc/52
     """
     for serial in _resolve_serials(serial_numbers):
         click.echo(f"Configuring {serial}...")
@@ -392,9 +392,9 @@ def live(serial_numbers, paths, duration):
 
     \b
     Examples:
-      movensense live /Meas/Ecg/200/mV
-      movensense live /Meas/Ecg/200/mV /Meas/Acc/52 /Meas/Temp
-      movensense live -d 30 /Meas/Acc/104
+      movesense live /Meas/Ecg/200/mV
+      movesense live /Meas/Ecg/200/mV /Meas/Acc/52 /Meas/Temp
+      movesense live -d 30 /Meas/Acc/104
     """
     if not paths:
         paths = ("/Meas/Ecg/200/mV",)
@@ -415,7 +415,7 @@ def serve(data_dir, port, host):
     """Start the data server for browsing collected sensor data.
 
     Exposes a REST API and browser UI at http://{host}:{port}.
-    Requires collected data in the data directory (from `movensense fetch`).
+    Requires collected data in the data directory (from `movesense fetch`).
     """
     from pathlib import Path
 

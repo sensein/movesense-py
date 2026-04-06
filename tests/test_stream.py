@@ -4,7 +4,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from movensense.server.stream import StreamManager, StreamState
+from movesense.server.stream import StreamManager, StreamState
 
 
 @pytest.fixture

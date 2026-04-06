@@ -16,8 +16,8 @@ import json
 import time
 from pathlib import Path
 
-from movensense.cli import _load_env_serial
-from movensense.sensor import SensorCommand
+from movesense.cli import _load_env_serial
+from movesense.sensor import SensorCommand
 
 ALL_CHANNELS = [
     "/Meas/Ecg/200/mV", "/Meas/Acc/52", "/Meas/Gyro/52", "/Meas/Magn/13",
@@ -129,7 +129,7 @@ async def capture(duration_per_batch: float, batch_size: int):
 
     # Now fetch the log
     print("\nFetching logged data for comparison...")
-    from movensense.cli import _fetch
+    from movesense.cli import _fetch
     fetch_dir = capture_dir / "fetched"
     fetch_dir.mkdir(exist_ok=True)
     try:

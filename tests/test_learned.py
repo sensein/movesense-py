@@ -6,7 +6,7 @@ import pytest
 
 class TestGrangerCausality:
     def test_detects_causal_relationship(self):
-        from movensense.physio.learned.causal import granger_causality_test
+        from movesense.physio.learned.causal import granger_causality_test
         np.random.seed(42)
         n = 500
         x = np.random.randn(n)
@@ -19,7 +19,7 @@ class TestGrangerCausality:
         assert result["p_value"] < 0.05
 
     def test_no_causal_relationship(self):
-        from movensense.physio.learned.causal import granger_causality_test
+        from movesense.physio.learned.causal import granger_causality_test
         np.random.seed(42)
         x = np.random.randn(500)
         y = np.random.randn(500)
@@ -29,7 +29,7 @@ class TestGrangerCausality:
         assert "p_value" in result
 
     def test_cross_channel_causality(self):
-        from movensense.physio.learned.causal import cross_channel_causality
+        from movesense.physio.learned.causal import cross_channel_causality
         np.random.seed(42)
         n = 1000
         ecg = np.random.randn(n)
@@ -43,7 +43,7 @@ class TestGrangerCausality:
         assert isinstance(edges, list)
 
     def test_transfer_entropy(self):
-        from movensense.physio.learned.causal import compute_transfer_entropy
+        from movesense.physio.learned.causal import compute_transfer_entropy
         np.random.seed(42)
         n = 1000
         x = np.random.randn(n)
@@ -63,7 +63,7 @@ class TestSSM:
 
     def test_s4_layer(self, skip_no_torch):
         import torch
-        from movensense.physio.learned.ssm import S4Layer
+        from movesense.physio.learned.ssm import S4Layer
         layer = S4Layer(d_model=32, d_state=16)
         x = torch.randn(2, 100, 32)
         y = layer(x)
@@ -71,7 +71,7 @@ class TestSSM:
 
     def test_bio_ssm_features(self, skip_no_torch):
         import torch
-        from movensense.physio.learned.ssm import BioSSM
+        from movesense.physio.learned.ssm import BioSSM
         model = BioSSM(n_channels=1, d_model=32, d_state=16, n_layers=2)
         x = torch.randn(2, 200, 1)
         features = model(x)
@@ -79,7 +79,7 @@ class TestSSM:
 
     def test_bio_ssm_classifier(self, skip_no_torch):
         import torch
-        from movensense.physio.learned.ssm import BioSSM
+        from movesense.physio.learned.ssm import BioSSM
         model = BioSSM(n_channels=3, d_model=32, n_layers=2, n_classes=5)
         x = torch.randn(2, 100, 3)
         logits = model(x)
@@ -93,7 +93,7 @@ class TestMultiModal:
 
     def test_channel_encoder(self, skip_no_torch):
         import torch
-        from movensense.physio.learned.multimodal import ChannelEncoder
+        from movesense.physio.learned.multimodal import ChannelEncoder
         enc = ChannelEncoder(in_channels=3, d_model=64)
         x = torch.randn(2, 100, 3)
         out = enc(x)
@@ -101,7 +101,7 @@ class TestMultiModal:
 
     def test_multimodal_fusion(self, skip_no_torch):
         import torch
-        from movensense.physio.learned.multimodal import MultiModalFusion
+        from movesense.physio.learned.multimodal import MultiModalFusion
         model = MultiModalFusion(
             channel_configs={"ecg": 1, "acc": 3, "gyro": 3},
             d_model=32, n_layers=1, n_classes=4,
@@ -116,7 +116,7 @@ class TestMultiModal:
 
     def test_multimodal_features(self, skip_no_torch):
         import torch
-        from movensense.physio.learned.multimodal import MultiModalFusion
+        from movesense.physio.learned.multimodal import MultiModalFusion
         model = MultiModalFusion(
             channel_configs={"ecg": 1, "acc": 3},
             d_model=32, n_layers=1, n_classes=0,
@@ -131,7 +131,7 @@ class TestMultiModal:
 
     def test_cross_attention_weights(self, skip_no_torch):
         import torch
-        from movensense.physio.learned.multimodal import MultiModalFusion
+        from movesense.physio.learned.multimodal import MultiModalFusion
         model = MultiModalFusion(
             channel_configs={"ecg": 1, "acc": 3},
             d_model=32, n_layers=1,

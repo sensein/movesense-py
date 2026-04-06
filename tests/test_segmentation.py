@@ -6,7 +6,7 @@ import pytest
 
 class TestChangepoints:
     def test_detects_mean_shift(self):
-        from movensense.physio.segmentation import detect_changepoints
+        from movesense.physio.segmentation import detect_changepoints
         # Clear mean shift at sample 500
         data = np.concatenate([np.random.randn(500), np.random.randn(500) + 5])
         bkps = detect_changepoints(data, method="pelt", penalty=5)
@@ -15,7 +15,7 @@ class TestChangepoints:
         assert any(abs(b - 500) < 50 for b in bkps)
 
     def test_multivariate_changepoints(self):
-        from movensense.physio.segmentation import detect_changepoints
+        from movesense.physio.segmentation import detect_changepoints
         data = np.vstack([
             np.random.randn(300, 3),
             np.random.randn(300, 3) + 3,
@@ -24,7 +24,7 @@ class TestChangepoints:
         assert len(bkps) > 0
 
     def test_no_changepoints_in_stationary(self):
-        from movensense.physio.segmentation import detect_changepoints
+        from movesense.physio.segmentation import detect_changepoints
         data = np.random.randn(500)
         bkps = detect_changepoints(data, penalty=100)
         assert len(bkps) == 0
@@ -32,7 +32,7 @@ class TestChangepoints:
 
 class TestMultistreamSegmentation:
     def test_segment_two_streams(self):
-        from movensense.physio.segmentation import segment_multistream
+        from movesense.physio.segmentation import segment_multistream
         streams = {
             "ecg": np.concatenate([np.random.randn(1000), np.random.randn(1000) + 3]),
             "acc": np.concatenate([np.random.randn(100, 3) * 0.1, np.random.randn(100, 3) * 2]),
@@ -46,7 +46,7 @@ class TestMultistreamSegmentation:
 
 class TestPatternDiscovery:
     def test_discovers_motif(self):
-        from movensense.physio.segmentation import discover_patterns
+        from movesense.physio.segmentation import discover_patterns
         # Create a signal with a repeating pattern
         pattern = np.sin(np.linspace(0, 2 * np.pi, 100))
         data = np.random.randn(2000) * 0.1

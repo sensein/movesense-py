@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from movensense.physio.ecg import detect_r_peaks, compute_rr_intervals, compute_hrv, compute_heart_rate
+from movesense.physio.ecg import detect_r_peaks, compute_rr_intervals, compute_hrv, compute_heart_rate
 
 
 def _synthetic_ecg(fs=200, duration=10, hr=72):

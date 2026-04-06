@@ -1,6 +1,6 @@
 # State-of-the-Art Physics-Based ML for Multimodal Time Series
 
-Research compilation for the movensense physio library. While developed for wearable physiological sensors (ECG + IMU), these architectures are general-purpose: they apply to any domain where multiple synchronized time series encode an underlying physical or dynamical system.
+Research compilation for the movesense physio library. While developed for wearable physiological sensors (ECG + IMU), these architectures are general-purpose: they apply to any domain where multiple synchronized time series encode an underlying physical or dynamical system.
 
 ## 1. State-Space Models (Mamba/S4) for Biosignals
 

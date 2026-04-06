@@ -10,7 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 log = logging.getLogger(__name__)
 
-CONFIG_DIR = Path.home() / ".config" / "movensense"
+CONFIG_DIR = Path.home() / ".config" / "movesense"
 TOKEN_FILE = CONFIG_DIR / "token"
 
 _bearer_scheme = HTTPBearer(auto_error=False)

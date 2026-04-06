@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import pytest
-from movensense.server.manifest import DataManifest, content_hash
+from movesense.server.manifest import DataManifest, content_hash
 
 
 class TestContentHash:
