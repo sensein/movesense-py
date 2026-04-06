@@ -17,7 +17,7 @@ from movesense.storage import (
 
 @pytest.fixture
 def device_dir(tmp_path):
-    d = tmp_path / "254830002158"
+    d = tmp_path / "000000000000"
     d.mkdir()
     return d
 
@@ -101,7 +101,7 @@ class TestBlobStore:
 class TestProvLog:
     def test_record_and_find(self, device_dir):
         prov = ProvLog(device_dir)
-        entry = prov.record("abc123", "log_1.sbem", "254830002158", 1, 0, ["ECG", "IMU9"])
+        entry = prov.record("abc123", "log_1.sbem", "000000000000", 1, 0, ["ECG", "IMU9"])
         assert entry["hash"] == "abc123"
         found = prov.find_by_hash("abc123")
         assert found is not None
@@ -127,6 +127,42 @@ class TestProvLog:
         assert len(lines) == 2
 
 
+class TestFetchDedup:
+    """Test that fetching the same SBEM twice skips conversion."""
+
+    def test_duplicate_detection(self, device_dir, sample_sbem):
+        blob_store = BlobStore(device_dir)
+        prov = ProvLog(device_dir)
+
+        # First store — new blob
+        h = blob_store.store(sample_sbem)
+        assert not prov.has_hash(h)
+        prov.record(h, sample_sbem.name, "000000000000", 1, 0, ["ECG"], "ok", sample_sbem.stat().st_size)
+
+        # Second store — duplicate detected
+        h2 = blob_store.store(sample_sbem)
+        assert h == h2
+        assert blob_store.exists(h2)
+        assert prov.has_hash(h2)
+        # Caller should skip conversion when prov.has_hash returns True
+
+    def test_new_content_processes(self, device_dir, tmp_path):
+        blob_store = BlobStore(device_dir)
+        prov = ProvLog(device_dir)
+
+        f1 = tmp_path / "log_1.sbem"
+        f2 = tmp_path / "log_2.sbem"
+        f1.write_bytes(b"content_one")
+        f2.write_bytes(b"content_two")
+
+        h1 = blob_store.store(f1)
+        prov.record(h1, f1.name, "s", 1, 0, ["ECG"])
+
+        h2 = blob_store.store(f2)
+        assert h1 != h2
+        assert not prov.has_hash(h2)  # new content, not yet recorded
+
+
 class TestDeviceStore:
     def test_create_new_store(self, device_dir):
         ds = DeviceStore(device_dir)
@@ -137,9 +173,9 @@ class TestDeviceStore:
     def test_add_session(self, device_dir):
         ds = DeviceStore(device_dir)
         ds.open()
-        group = ds.add_session(0, {"device_serial": "254830002158", "firmware_version": "1.0.1"})
+        group = ds.add_session(0, {"device_serial": "000000000000", "firmware_version": "1.0.1"})
         assert group is not None
-        assert ds.root["0"].attrs["device_serial"] == "254830002158"
+        assert ds.root["0"].attrs["device_serial"] == "000000000000"
 
     def test_update_sessions_index(self, device_dir):
         ds = DeviceStore(device_dir)

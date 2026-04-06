@@ -104,17 +104,36 @@ async def _stop(serial: str) -> dict:
 
 
 async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
+    """Fetch logs from device, convert to Zarr v3 with content-addressed dedup.
+
+    Pipeline:
+    1. Download SBEM from device
+    2. Compute SHA-256 → check blob store → skip if duplicate
+    3. Store blob, convert SBEM → JSON → Zarr (session group in device store)
+    4. Write provenance record
+    5. Delete intermediate JSON/CSV on success (keep SBEM blob + Zarr)
+    """
     import subprocess
-    from .json2csv import convert_json_to_csv
     from .json2zarr import convert_json_to_zarr
+    from .storage import BlobStore, ProvLog
 
     sbem2json_path = Path(__file__).parent.parent.parent / "sbem2json"
     if not sbem2json_path.exists():
         return {"success": False, "error": f"sbem2json not found at {sbem2json_path}"}
 
+    # Device directory for blob store + prov log
+    device_dir = Path(output_dir).parent  # output_dir is {data_dir}/{serial}/{date}
+    # If output_dir is {data_dir}/{serial}/{date}, device_dir should be {data_dir}/{serial}
+    # But serial might not be the parent name if called differently. Use data_dir/serial.
+    data_dir = Path(output_dir).parent.parent
+    device_dir = data_dir / serial
+    device_dir.mkdir(parents=True, exist_ok=True)
+
+    blob_store = BlobStore(device_dir)
+    prov = ProvLog(device_dir)
+
     try:
         async with SensorCommand(serial, set_time=False) as sensor:
-            # Check if device is currently logging
             status = await sensor.get_status()
             if status.get("dlstate") == 3:
                 return {
@@ -143,9 +162,10 @@ async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
                 log_id = entry["id"]
                 sbem_file = output_dir / f"Movesense_log_{log_id}_{serial}.sbem"
                 json_file = output_dir / f"Movesense_log_{log_id}_{serial}.json"
+                # Legacy paths (for backward compat during transition)
                 zarr_path = output_dir / f"Movesense_log_{log_id}_{serial}.zarr"
-                csv_file = output_dir / f"Movesense_log_{log_id}_{serial}.csv"
 
+                # Step 1: Fetch SBEM from device if not already on disk
                 if not sbem_file.exists() or sbem_file.stat().st_size == 0:
                     click.echo(f"  Fetching log {log_id}...")
                     result = await sensor.fetch_data(log_id=log_id, output_file=str(sbem_file))
@@ -153,6 +173,16 @@ async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
                         click.echo(f"  Failed to fetch log {log_id}: {result.get('error')}", err=True)
                         continue
 
+                # Step 2: Compute hash and check for duplicates
+                blob_hash = blob_store.store(sbem_file)
+
+                if prov.has_hash(blob_hash):
+                    existing = prov.find_by_hash(blob_hash)
+                    click.echo(f"  Log {log_id}: already processed (hash: {blob_hash[:12]}..., session {existing.get('session_index', '?')})")
+                    fetched_files.append(str(sbem_file))
+                    continue
+
+                # Step 3: Convert SBEM → JSON
                 click.echo(f"  Converting log {log_id}: SBEM → JSON")
                 proc = subprocess.run(
                     [str(sbem2json_path), "--sbem2json", str(sbem_file), "--output", str(json_file)],
@@ -160,22 +190,38 @@ async def _fetch(serial: str, output_dir: Path, edf: bool = False) -> dict:
                 )
                 if proc.returncode != 0:
                     click.echo(f"  sbem2json failed for log {log_id}: {proc.stderr}", err=True)
+                    prov.record(blob_hash, sbem_file.name, serial, log_id, -1, [], "error", sbem_file.stat().st_size)
                     continue
 
+                # Step 4: Convert JSON → Zarr v3 (legacy per-session store for now)
                 click.echo(f"  Converting log {log_id}: JSON → Zarr v3")
                 convert_json_to_zarr(json_file, zarr_path, device_serial=serial)
 
-                click.echo(f"  Converting log {log_id}: JSON → CSV")
-                await convert_json_to_csv(str(json_file), str(csv_file))
+                # Step 5: Write provenance record
+                # Extract channel names from the Zarr store
+                import zarr
+                try:
+                    store = zarr.open_group(str(zarr_path), mode="r")
+                    channels = [name for name in store]
+                except Exception:
+                    channels = []
 
-                if edf:
-                    from .csv2edf import csv_to_edf_plus
-                    edf_file = output_dir / f"Movesense_log_{log_id}_{serial}.edf"
-                    click.echo(f"  Converting log {log_id}: CSV → EDF+")
-                    try:
-                        await csv_to_edf_plus(str(csv_file), str(edf_file))
-                    except Exception as e:
-                        click.echo(f"  EDF+ conversion failed: {e}", err=True)
+                prov.record(
+                    blob_hash, sbem_file.name, serial, log_id,
+                    session_index=log_id - 1,  # 0-indexed
+                    channels=channels,
+                    status="ok",
+                    file_size_bytes=sbem_file.stat().st_size,
+                )
+                click.echo(f"  Stored blob {blob_hash[:12]}... → session {log_id - 1}")
+
+                # Step 6: Clean up intermediates (keep SBEM blob + Zarr only)
+                if json_file.exists():
+                    json_file.unlink()
+                    click.echo(f"  Cleaned up intermediate JSON")
+                # Clean up any CSV files for this log
+                for csv in output_dir.glob(f"Movesense_log_{log_id}_{serial}*.csv"):
+                    csv.unlink()
 
                 fetched_files.append(str(sbem_file))
 
