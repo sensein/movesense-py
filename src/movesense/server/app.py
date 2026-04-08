@@ -11,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+import zarr
+
 from .auth import get_active_token, get_or_create_token, set_active_token, verify_token
 from .scanner import DataScanner
 from .manifest import DataManifest
@@ -600,6 +602,68 @@ def create_app(data_dir: Path) -> FastAPI:
         if result is None:
             raise HTTPException(404, detail=f"Device not found: {serial}")
         return result
+
+    # --- Timeline API ---
+
+    @app.get("/api/devices/{serial}/timeline")
+    async def timeline_query(
+        serial: str,
+        start: str = Query(..., description="UTC start time (ISO 8601)"),
+        end: str = Query(..., description="UTC end time (ISO 8601)"),
+        channel: str = Query(None, description="Channel filter"),
+        buckets: int = Query(0, ge=0, description="Downsample target (0=raw)"),
+        target_rate: float = Query(None, description="Resample to this Hz"),
+        _: str = Depends(verify_token),
+    ):
+        """Query sensor data across sessions by UTC time range."""
+        from .timeline import query_timeline
+        from datetime import datetime as dt, timezone as tz
+
+        # Parse ISO 8601 to µs
+        try:
+            start_dt = dt.fromisoformat(start.replace("Z", "+00:00"))
+            end_dt = dt.fromisoformat(end.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, detail="Invalid ISO 8601 timestamp")
+
+        start_us = int(start_dt.timestamp() * 1_000_000)
+        end_us = int(end_dt.timestamp() * 1_000_000)
+
+        if start_us >= end_us:
+            raise HTTPException(400, detail="start must be before end")
+
+        return query_timeline(
+            data_dir, serial,
+            start_utc_us=start_us,
+            end_utc_us=end_us,
+            channel=channel,
+            buckets=buckets,
+            target_rate=target_rate,
+        )
+
+    @app.get("/api/devices/{serial}/sessions")
+    async def list_device_sessions(serial: str, _: str = Depends(verify_token)):
+        """List all recording sessions for a device with enriched metadata."""
+        store_path = data_dir / serial / "data.zarr"
+        if store_path.exists():
+            root = zarr.open_group(str(store_path), mode="r")
+            sessions_idx = dict(root.attrs.get("sessions", {}))
+            sessions = []
+            for idx_str, summary in sorted(sessions_idx.items(), key=lambda x: int(x[0])):
+                entry = {"index": int(idx_str)}
+                entry.update(summary)
+                sessions.append(entry)
+            return {"serial": serial, "session_count": len(sessions), "sessions": sessions}
+        else:
+            # Fallback to scanner for legacy layout
+            dates = scanner.get_dates(serial)
+            if dates is None:
+                raise HTTPException(404, detail=f"Device not found: {serial}")
+            sessions = []
+            for date in dates:
+                for s in scanner.get_sessions(serial, date) or []:
+                    sessions.append({"index": s["log_id"], "date": date, "channels": s["channels"]})
+            return {"serial": serial, "session_count": len(sessions), "sessions": sessions}
 
     # --- WebSocket Streaming ---
 
