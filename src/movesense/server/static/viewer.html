@@ -39,7 +39,11 @@
       <button onclick="zoomTo('10s')" class="zbtn">10s</button>
       <span id="zoom-label" style="margin-left:0.5rem;color:#999;"></span>
     </div>
-    <canvas id="overview-bar" style="width:100%;height:32px;margin-top:0.25rem;cursor:crosshair;border:1px solid #e5e7eb;border-radius:3px;"></canvas>
+    <div style="display:flex;gap:0.25rem;align-items:center;margin-top:0.25rem;">
+      <button onclick="stepView(-1)" style="font-size:0.8rem;padding:2px 8px;">◀</button>
+      <canvas id="overview-bar" style="flex:1;height:32px;cursor:crosshair;border:1px solid #e5e7eb;border-radius:3px;"></canvas>
+      <button onclick="stepView(1)" style="font-size:0.8rem;padding:2px 8px;">▶</button>
+    </div>
   </div>
   <div id="status" class="status"></div>
   <div id="charts"></div>
@@ -222,6 +226,27 @@
 
     function resetZoom() { zoomTo('all'); }
 
+    function stepView(direction) {
+      // Step by half the current view width
+      if (!_currentView.start_us || !viewer) return;
+      const span = _currentView.end_us - _currentView.start_us;
+      const step = span * 0.5 * direction;
+      _currentView.start_us = Math.max(_fullRange.start_us, _currentView.start_us + step);
+      _currentView.end_us = Math.min(_fullRange.end_us, _currentView.end_us + step);
+
+      // Clear and reload
+      if (chartRenderer) {
+        chartRenderer._channels = {};
+        chartRenderer._plots.forEach(p => p.destroy());
+        chartRenderer._plots = [];
+        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
+        chartRenderer._xRange = [_currentView.start_us / 1e6, _currentView.end_us / 1e6];
+      }
+      viewer.setView(_currentView.start_us, _currentView.end_us, chartRenderer?.container?.clientWidth || 1200);
+      drawOverview();
+      updateZoomLabel();
+    }
+
     function updateZoomLabel() {
       const el = document.getElementById('zoom-label');
       if (!el || !_currentView.start_us) return;
@@ -293,7 +318,12 @@
       const xPct = (e.clientX - rect.left) / rect.width;
       const clickUs = _fullRange.start_us + xPct * (_fullRange.end_us - _fullRange.start_us);
       // Clear chart for fresh data at new position
-      if (chartRenderer) { chartRenderer._channels = {}; chartRenderer._xRange = null; }
+      if (chartRenderer) {
+        chartRenderer._channels = {};
+        chartRenderer._plots.forEach(p => p.destroy());
+        chartRenderer._plots = [];
+        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
+      }
       // Center current view window on click point
       const viewSpan = _currentView.end_us - _currentView.start_us;
       _currentView = {
