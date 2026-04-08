@@ -1,7 +1,7 @@
 /**
- * viewer.js — Thin WebSocket client + stacked uPlot renderer.
+ * viewer.js — Server-driven streaming viewer with ECharts.
  * All data comes from server via WebSocket. No REST calls for chart data.
- * Target: <500 lines.
+ * ECharts handles multi-channel stacking, pan/zoom, and time axis natively.
  */
 
 const VC_COLORS = [
@@ -20,7 +20,7 @@ class ViewerClient {
     this.onData = null;
     this.onStatus = null;
     this.onError = null;
-    this._buffer = {};  // prefetch buffer: key → data packet
+    this._buffer = {};
   }
 
   connect() {
@@ -39,45 +39,30 @@ class ViewerClient {
         }
         else if (msg.type === 'status' && this.onStatus) this.onStatus(msg);
         else if (msg.type === 'error' && this.onError) this.onError(msg.message);
-      } catch (err) { /* skip malformed */ }
+      } catch (err) {}
     };
     this.ws.onclose = () => { if (this.onStatus) this.onStatus({ state: 'disconnected' }); };
     this.ws.onerror = () => { if (this.onError) this.onError('WebSocket connection failed'); };
   }
 
-  send(msg) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
-    }
-  }
-
+  send(msg) { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg)); }
   selectDevice(serial) { this.send({ type: 'connect', serial }); }
   setView(startUs, endUs, widthPx) { this.send({ type: 'view', start_us: startUs, end_us: endUs, width_px: widthPx }); }
   subscribe(channels) { this.send({ type: 'subscribe', channels }); }
   startStream(serial, channels) { this.send({ type: 'stream', action: 'start', serial, channels }); }
   stopStream() { this.send({ type: 'stream', action: 'stop' }); }
-
-  checkBuffer(channel, startTime, endTime) {
-    for (const [key, pkt] of Object.entries(this._buffer)) {
-      if (pkt.channel === channel && pkt.time[0] <= startTime && pkt.time[pkt.time.length-1] >= endTime) {
-        return pkt;
-      }
-    }
-    return null;
-  }
-
   clearBuffer() { this._buffer = {}; }
 }
 
-// --- ChartRenderer: stacked uPlot rows ---
+// --- ChartRenderer: ECharts with stacked grids + dataZoom ---
 
 class ChartRenderer {
   constructor(containerId) {
     this.container = document.getElementById(containerId);
-    this._plots = [];
-    this._channels = {};  // name → {data: {time, values}, axes, unit}
-    this._syncKey = 'vr-' + Math.random().toString(36).slice(2, 6);
-    this.onZoom = null;
+    this._chart = null;
+    this._channels = {};  // name → {time, values, axes, unit, source}
+    this.onViewChange = null;  // callback(startUtcS, endUtcS) when user pans/zooms
+    this._debounceTimer = null;
   }
 
   update(packet) {
@@ -86,214 +71,155 @@ class ChartRenderer {
     const axes = isMulti ? packet.values[0].length : 1;
 
     if (packet.source === 'live' && this._channels[ch]) {
-      // Live mode: append data, trim to window
       const existing = this._channels[ch];
       existing.time = existing.time.concat(packet.time);
       existing.values = existing.values.concat(packet.values);
+      // Trim to 30s
       if (existing.time.length > 1) {
         const maxT = existing.time[existing.time.length - 1];
         const cutoff = maxT - 30;
-        let trimIdx = 0;
-        while (trimIdx < existing.time.length && existing.time[trimIdx] < cutoff) trimIdx++;
-        if (trimIdx > 0) {
-          existing.time = existing.time.slice(trimIdx);
-          existing.values = existing.values.slice(trimIdx);
-        }
+        let i = 0;
+        while (i < existing.time.length && existing.time[i] < cutoff) i++;
+        if (i > 0) { existing.time = existing.time.slice(i); existing.values = existing.values.slice(i); }
       }
-      existing.source = 'live';
     } else {
-      // Store mode: replace data for this channel
-      // If this is a new view response (not prefetch), mark for clearing stale channels
-      if (!packet.prefetch) this._pendingViewChannels = (this._pendingViewChannels || new Set()).add(ch);
-      this._channels[ch] = {
-        time: packet.time, values: packet.values,
-        axes, unit: packet.unit || '', source: packet.source,
-      };
+      this._channels[ch] = { time: packet.time, values: packet.values, axes, unit: packet.unit || '', source: packet.source };
     }
 
-    // Debounce render — wait for all channels to arrive before re-rendering
-    clearTimeout(this._renderTimer);
-    this._renderTimer = setTimeout(() => {
-      this._render();
-      // Apply stored X range after render (zoom state)
-      if (this._xRange) {
-        this._plots.forEach(p => p.setScale('x', { min: this._xRange[0], max: this._xRange[1] }));
-      }
-    }, 50);
-  }
-
-  /** Set the visible X range (UTC seconds) after rendering */
-  setXRange(startUtcS, endUtcS) {
-    this._xRange = [startUtcS, endUtcS];
-    this._plots.forEach(p => p.setScale('x', { min: startUtcS, max: endUtcS }));
+    clearTimeout(this._debounceTimer);
+    this._debounceTimer = setTimeout(() => this._render(), 80);
   }
 
   clear() {
-    this._plots.forEach(p => p.destroy());
-    this._plots = [];
     this._channels = {};
-    if (this.container) this.container.innerHTML = '';
+    if (this._chart) { this._chart.dispose(); this._chart = null; }
+    this.container.innerHTML = '';
+  }
+
+  setViewRange(startUtcS, endUtcS) {
+    if (!this._chart) return;
+    this._chart.dispatchAction({ type: 'dataZoom', start: 0, end: 100,
+      dataZoomIndex: [0, 1], startValue: startUtcS * 1000, endValue: endUtcS * 1000 });
   }
 
   captureScreenshot() {
-    const canvases = this._plots.map(p => p.ctx.canvas);
-    if (!canvases.length) return;
-    const totalH = canvases.reduce((h, c) => h + c.height, 0);
-    const maxW = Math.max(...canvases.map(c => c.width));
-    const off = document.createElement('canvas');
-    off.width = maxW; off.height = totalH;
-    const ctx = off.getContext('2d');
-    let y = 0;
-    for (const c of canvases) { ctx.drawImage(c, 0, y); y += c.height; }
-    off.toBlob(blob => {
-      if (!blob) return;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `movesense-${new Date().toISOString().slice(0,19)}.png`;
-      a.click(); URL.revokeObjectURL(a.href);
-    }, 'image/png');
+    if (!this._chart) return;
+    const url = this._chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#fff' });
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `movesense-${new Date().toISOString().slice(0,19)}.png`;
+    a.click();
   }
 
   _render() {
-    this._plots.forEach(p => p.destroy());
-    this._plots = [];
-    this.container.innerHTML = '';
-
     const chNames = Object.keys(this._channels);
     if (!chNames.length) {
+      if (this._chart) { this._chart.dispose(); this._chart = null; }
       this.container.innerHTML = '<div style="padding:2rem;text-align:center;color:#999">No data</div>';
       return;
     }
 
-    const width = this.container.clientWidth || 800;
-    const rowH = Math.max(80, Math.min(150, 550 / chNames.length));
-    const self = this;
+    if (!this._chart) {
+      this.container.innerHTML = '';
+      this._chart = echarts.init(this.container, null, { height: Math.max(300, 130 * chNames.length + 80) });
+      const self = this;
+      this._chart.on('datazoom', function(params) {
+        // Fire view change callback with the visible time range
+        const opt = self._chart.getOption();
+        const dz = opt.dataZoom[0];
+        if (dz && self.onViewChange) {
+          self.onViewChange(dz.startValue / 1000, dz.endValue / 1000);
+        }
+      });
+      // Resize on window resize
+      window.addEventListener('resize', () => { if (self._chart) self._chart.resize(); });
+    }
+
+    // Resize if channel count changed
+    this._chart.resize({ height: Math.max(300, 130 * chNames.length + 80) });
+
+    // Build ECharts option
+    const grids = [];
+    const xAxes = [];
+    const yAxes = [];
+    const series = [];
+    const axisLabels = { 3: ['x','y','z'], 9: ['Ax','Ay','Az','Gx','Gy','Gz','Mx','My','Mz'] };
+
+    const gridHeight = Math.max(60, Math.min(120, (this.container.clientHeight - 80) / chNames.length));
+    let colorIdx = 0;
 
     chNames.forEach((name, idx) => {
       const ch = this._channels[name];
-      const isLast = idx === chNames.length - 1;
-      const el = document.createElement('div');
-      el.style.marginBottom = isLast ? '0' : '-1px';
-      this.container.appendChild(el);
+      const top = 10 + idx * (gridHeight + 20);
 
-      // Build series — use regular arrays (not typed) to support null gap markers
-      const series = [{}];
-      const plotData = [ch.time]; // regular array, not Float64Array
-      const axisLabels = ch.axes === 3 ? ['x','y','z'] :
-        ch.axes === 9 ? ['Ax','Ay','Az','Gx','Gy','Gz','Mx','My','Mz'] :
-        [name.split('/').pop() || name];
+      grids.push({ left: 60, right: 20, top, height: gridHeight });
 
-      if (ch.axes > 1) {
-        const hasMulti = Array.isArray(ch.values[0]);
-        for (let a = 0; a < ch.axes; a++) {
-          series.push({ label: axisLabels[a], stroke: VC_COLORS[(idx*3+a) % VC_COLORS.length], width: 1, spanGaps: false });
-          plotData.push(ch.values.map(r => r === null ? null : (hasMulti ? r[a] : r)));
-        }
-      } else {
-        series.push({ label: axisLabels[0], stroke: VC_COLORS[idx % VC_COLORS.length], width: 1, spanGaps: false });
-        plotData.push(ch.values); // nulls preserved in regular array
-      }
+      xAxes.push({
+        type: 'time',
+        gridIndex: idx,
+        show: idx === chNames.length - 1,  // Only bottom row shows X labels
+        axisLabel: { show: idx === chNames.length - 1, fontSize: 9 },
+        axisTick: { show: idx === chNames.length - 1 },
+        splitLine: { show: true, lineStyle: { color: '#f0f0f0' } },
+      });
 
       const shortName = name.split('/').pop() || name;
-      const opts = {
-        width, height: isLast ? rowH + 28 : rowH,
-        series,
-        scales: {
-          x: self._xRange
-            ? { time: true, min: self._xRange[0], max: self._xRange[1] }
-            : { time: true },
-          y: { auto: true },
-        },
-        axes: [
-          { stroke: '#333', grid: { stroke: '#eee' }, size: isLast ? 30 : 0, font: '9px sans-serif',
-            show: isLast, ticks: { show: isLast },
-            // Adaptive time formatting: dates at wide zoom, HH:MM:SS at narrow
-            values: isLast ? (u, vals) => vals.map(v => {
-              const d = new Date(v * 1000);
-              const range = u.scales.x.max - u.scales.x.min;
-              if (range > 86400 * 7) return d.toLocaleDateString([], {month:'short', day:'numeric'});
-              if (range > 86400) return d.toLocaleDateString([], {month:'short', day:'numeric'}) + '\n' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-              if (range > 3600) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-              if (range > 60) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-              return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) + '.' + String(d.getMilliseconds()).padStart(3,'0');
-            }) : null },
-          { stroke: VC_COLORS[idx % VC_COLORS.length], grid: { stroke: '#f5f5f5' }, size: 45,
-            font: '9px sans-serif', label: `${shortName} ${ch.unit ? '('+ch.unit+')' : ''}`, labelFont: '9px sans-serif', labelSize: 10 },
-        ],
-        cursor: { sync: { key: self._syncKey, setSeries: false }, drag: { x: false, y: false } },
-        select: { show: false },
-        legend: { show: false },
-      };
-
-      const plot = new uPlot(opts, plotData, el);
-      this._plots.push(plot);
-
-      // Scroll wheel X-zoom (synced)
-      el.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const rect = el.getBoundingClientRect();
-        const xPct = (e.clientX - rect.left) / rect.width;
-        const xMin = plot.scales.x.min, xMax = plot.scales.x.max;
-        const range = xMax - xMin;
-        const factor = e.deltaY > 0 ? 1.3 : 0.7;
-        const nr = Math.max(0.1, range * factor);
-        const c = xMin + range * xPct;
-        self._plots.forEach(p => p.setScale('x', { min: c - nr * xPct, max: c + nr * (1 - xPct) }));
-        if (self.onZoom) self.onZoom(c - nr * xPct, c + nr * (1 - xPct));
-      }, { passive: false });
-
-      // Drag to pan — uses shared state from ChartRenderer (not per-plot)
-      el.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
-        const rect = el.getBoundingClientRect();
-        if (e.clientX - rect.left < 50) return;
-        // Use _xRange or first plot's scale as reference (consistent across all rows)
-        const ref = self._xRange || (self._plots[0] ? [self._plots[0].scales.x.min, self._plots[0].scales.x.max] : null);
-        if (!ref) return;
-        self._panStart = { x: e.clientX, xMin: ref[0], xMax: ref[1] };
-        el.style.cursor = 'grabbing';
+      yAxes.push({
+        type: 'value',
+        gridIndex: idx,
+        name: `${shortName}\n${ch.unit ? '(' + ch.unit + ')' : ''}`,
+        nameLocation: 'middle',
+        nameGap: 40,
+        nameTextStyle: { fontSize: 9, color: VC_COLORS[idx % VC_COLORS.length] },
+        axisLabel: { fontSize: 8 },
+        splitLine: { show: true, lineStyle: { color: '#f8f8f8' } },
       });
-      el.addEventListener('mousemove', (e) => {
-        if (!self._panStart) return;
-        const dx = e.clientX - self._panStart.x;
-        const pxRange = el.clientWidth;
-        const valRange = self._panStart.xMax - self._panStart.xMin;
-        const shift = -(dx / pxRange) * valRange;
-        const newMin = self._panStart.xMin + shift;
-        const newMax = self._panStart.xMax + shift;
-        self._plots.forEach(p => p.setScale('x', { min: newMin, max: newMax }));
-      });
-      const endPan = (e) => {
-        if (!self._panStart) return;
-        el.style.cursor = '';
-        const dx = e.clientX - self._panStart.x;
-        self._panStart = null;
-        if (Math.abs(dx) > 5 && self._plots[0]) {
-          const newMin = self._plots[0].scales.x.min;
-          const newMax = self._plots[0].scales.x.max;
-          if (self.onZoom) self.onZoom(newMin, newMax);
+
+      // Build series data
+      if (ch.axes > 1) {
+        const labels = axisLabels[ch.axes] || Array.from({length: ch.axes}, (_, i) => `ch${i}`);
+        for (let a = 0; a < ch.axes; a++) {
+          const data = ch.time.map((t, i) => {
+            const v = ch.values[i];
+            if (v == null) return [t * 1000, null];
+            return [t * 1000, Array.isArray(v) ? v[a] : v];
+          });
+          series.push({
+            type: 'line', name: `${shortName} ${labels[a]}`,
+            xAxisIndex: idx, yAxisIndex: idx,
+            data, symbol: 'none', lineStyle: { width: 1 },
+            color: VC_COLORS[(colorIdx + a) % VC_COLORS.length],
+            connectNulls: false,
+          });
         }
-      };
-      el.addEventListener('mouseup', endPan);
-      el.addEventListener('mouseleave', endPan);
-
-      // Double-click Y reset
-      el.addEventListener('dblclick', (e) => {
-        if (e.clientX - el.getBoundingClientRect().left < 50) plot.setScale('y', { auto: true });
-      });
-
-      // Legend click (toggle series)
-      el.querySelectorAll('.u-legend .u-series').forEach((item, si) => {
-        if (si === 0) return;
-        item.style.cursor = 'pointer';
-        item.addEventListener('click', () => plot.setSeries(si, { show: !plot.series[si].show }));
-      });
+        colorIdx += ch.axes;
+      } else {
+        const data = ch.time.map((t, i) => [t * 1000, ch.values[i]]);  // ECharts time axis uses ms
+        series.push({
+          type: 'line', name: shortName,
+          xAxisIndex: idx, yAxisIndex: idx,
+          data, symbol: 'none', lineStyle: { width: 1 },
+          color: VC_COLORS[colorIdx % VC_COLORS.length],
+          connectNulls: false,
+        });
+        colorIdx++;
+      }
     });
-  }
 
-  resize() {
-    const w = this.container.clientWidth || 800;
-    this._plots.forEach(p => p.setSize({ width: w, height: p.height }));
+    const option = {
+      animation: false,
+      grid: grids,
+      xAxis: xAxes,
+      yAxis: yAxes,
+      series,
+      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+      dataZoom: [
+        { type: 'slider', xAxisIndex: xAxes.map((_, i) => i), bottom: 5, height: 20, filterMode: 'none' },
+        { type: 'inside', xAxisIndex: xAxes.map((_, i) => i), filterMode: 'none' },
+      ],
+    };
+
+    this._chart.setOption(option, true);
   }
 }
 
@@ -305,7 +231,6 @@ class ControlPanel {
     this.metadata = null;
     this.selectedChannels = new Set();
     this.onChannelToggle = null;
-    this.onStreamControl = null;
   }
 
   buildFromMetadata(meta) {
@@ -326,12 +251,10 @@ class ControlPanel {
       <span style="color:${m.state === 'streaming' ? '#22c55e' : m.state === 'logging' ? '#ef4444' : '#999'};margin-left:0.5rem;">● ${m.state}</span>
     </div>`;
 
-    // Session overview bar
     if (m.sessions && m.sessions.length > 0) {
       html += `<div style="font-size:0.7rem;color:#999;margin-bottom:0.25rem;">${m.sessions.length} sessions</div>`;
     }
 
-    // Channel picker
     html += '<div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">';
     html += '<span style="font-size:0.8rem;font-weight:600;">Channels:</span>';
     for (const ch of m.channels) {
@@ -339,12 +262,11 @@ class ControlPanel {
       const rate = ch.rate_hz ? ` ${Math.round(ch.rate_hz)}Hz` : '';
       html += `<label style="font-size:0.8rem;cursor:pointer;white-space:nowrap;">
         <input type="checkbox" ${checked} onchange="controlPanel._toggle('${ch.name}', this.checked)">
-        ${ch.name.split('/').pop()}${rate ? '<span style=\"color:#999;font-size:0.7rem\">'+rate+'</span>' : ''}
+        ${ch.name.split('/').pop()}${rate ? '<span style="color:#999;font-size:0.7rem">'+rate+'</span>' : ''}
       </label>`;
     }
     html += '</div>';
 
-    // Controls
     html += '<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">';
     html += '<button onclick="chartRenderer.captureScreenshot()" style="font-size:0.75rem;">📷</button>';
     html += '<button onclick="resetZoom()" style="font-size:0.75rem;">Reset Zoom</button>';
@@ -360,15 +282,11 @@ class ControlPanel {
   }
 
   updateStatus(status) {
-    // Update state indicator
-    const stateEl = this.container?.querySelector('span[style*="margin-left"]');
-    if (stateEl) {
-      stateEl.textContent = `● ${status.state || 'unknown'}`;
-    }
+    const el = this.container?.querySelector('span[style*="margin-left"]');
+    if (el) el.textContent = `● ${status.state || 'unknown'}`;
   }
 }
 
-// Exports
 window.ViewerClient = ViewerClient;
 window.ChartRenderer = ChartRenderer;
 window.ControlPanel = ControlPanel;

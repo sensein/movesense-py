@@ -4,52 +4,27 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Movesense Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 1rem; max-width: 1400px; margin: 0 auto; color: #1a1a2e; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 1rem; max-width: 1600px; margin: 0 auto; color: #1a1a2e; }
     h1 { font-size: 1.2rem; margin-bottom: 0.5rem; }
     .device-list { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
     .device-btn { padding: 0.4rem 1rem; border: 1px solid #ddd; border-radius: 0.25rem; cursor: pointer; font-size: 0.85rem; background: #f9f9f9; }
     .device-btn:hover { background: #e5e7eb; }
     .device-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
-    #controls { margin-bottom: 0.5rem; }
-    #charts { width: 100%; }
     .error { color: #ef4444; font-size: 0.85rem; margin: 0.5rem 0; }
     .status { font-size: 0.8rem; color: #999; }
-    .zbtn { padding: 2px 8px; font-size: 0.7rem; border: 1px solid #ddd; border-radius: 3px; background: #f9f9f9; cursor: pointer; }
-    .zbtn:hover { background: #e5e7eb; }
-    .zbtn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
   </style>
 </head>
 <body>
   <h1>Movesense Viewer</h1>
   <div id="device-list" class="device-list">Loading devices...</div>
   <div id="controls"></div>
-  <div id="zoom-nav" style="display:none;margin:0.5rem 0;">
-    <div style="display:flex;gap:0.25rem;align-items:center;flex-wrap:wrap;font-size:0.75rem;">
-      <span style="font-weight:600;">Zoom:</span>
-      <button onclick="zoomTo('all')" class="zbtn">All</button>
-      <button onclick="zoomTo('month')" class="zbtn">Month</button>
-      <button onclick="zoomTo('week')" class="zbtn">Week</button>
-      <button onclick="zoomTo('day')" class="zbtn">Day</button>
-      <button onclick="zoomTo('hour')" class="zbtn">Hour</button>
-      <button onclick="zoomTo('10min')" class="zbtn">10min</button>
-      <button onclick="zoomTo('min')" class="zbtn">Min</button>
-      <button onclick="zoomTo('10s')" class="zbtn">10s</button>
-      <span id="zoom-label" style="margin-left:0.5rem;color:#999;"></span>
-    </div>
-    <div style="display:flex;gap:0.25rem;align-items:center;margin-top:0.25rem;">
-      <button onclick="stepView(-1)" style="font-size:0.8rem;padding:2px 8px;">◀</button>
-      <canvas id="overview-bar" style="flex:1;height:32px;cursor:crosshair;border:1px solid #e5e7eb;border-radius:3px;"></canvas>
-      <button onclick="stepView(1)" style="font-size:0.8rem;padding:2px 8px;">▶</button>
-    </div>
-  </div>
   <div id="status" class="status"></div>
-  <div id="charts"></div>
+  <div id="charts" style="width:100%;"></div>
 
-  <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
-  <script src="/static/viewer.js?v=20260408e"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script src="/static/viewer.js?v=20260408f"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
@@ -58,9 +33,7 @@
     let viewer = null;
     let chartRenderer = null;
     let controlPanel = null;
-    let currentSerial = null;
 
-    // Load device list via REST (metadata, not chart data)
     async function loadDevices() {
       try {
         const resp = await fetch('/api/devices', { headers: { 'Authorization': 'Bearer ' + TOKEN } });
@@ -80,24 +53,19 @@
     }
 
     function selectDevice(serial, btn) {
-      // Highlight selected
       document.querySelectorAll('.device-btn').forEach(b => b.classList.remove('active'));
       if (btn) btn.classList.add('active');
-      currentSerial = serial;
 
-      // Setup chart renderer
       if (chartRenderer) chartRenderer.clear();
       chartRenderer = new ChartRenderer('charts');
       window.chartRenderer = chartRenderer;
 
-      // Setup control panel
       controlPanel = new ControlPanel('controls');
       window.controlPanel = controlPanel;
       controlPanel.onChannelToggle = (channels) => {
         if (viewer) viewer.subscribe(channels);
       };
 
-      // Connect viewer WebSocket
       if (viewer && viewer.ws) viewer.ws.close();
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       viewer = new ViewerClient(`${proto}//${location.host}/ws/viewer?token=${TOKEN}`);
@@ -106,22 +74,20 @@
         controlPanel.buildFromMetadata(meta);
         document.getElementById('status').textContent =
           `${meta.sessions?.length || 0} sessions | ${meta.channels?.length || 0} channels | ${meta.state}`;
-        // Show zoom nav and draw overview
-        document.getElementById('zoom-nav').style.display = '';
-        _fullRange = meta.time_range || {};
-        _currentView = { start_us: _fullRange.start_us, end_us: _fullRange.end_us };
-        _sessions = meta.sessions || [];
-        drawOverview();
-        updateZoomLabel();
       };
 
       viewer.onData = (pkt) => {
         chartRenderer.update(pkt);
-        // After data arrives, set X range to current view (in UTC seconds)
-        if (_currentView.start_us && _currentView.end_us) {
-          setTimeout(() => {
-            chartRenderer.setXRange(_currentView.start_us / 1e6, _currentView.end_us / 1e6);
-          }, 100);
+      };
+
+      // ECharts dataZoom fires view change → request fresh data from server
+      chartRenderer.onViewChange = (startUtcS, endUtcS) => {
+        if (viewer) {
+          const startUs = Math.round(startUtcS * 1e6);
+          const endUs = Math.round(endUtcS * 1e6);
+          if (endUs > startUs) {
+            viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
+          }
         }
       };
 
@@ -134,215 +100,20 @@
         document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
       };
 
-      // Zoom handler: chart X-axis is now UTC seconds
-      let _lastZoomRange = null;
-      chartRenderer.onZoom = (startUtcS, endUtcS) => {
-        if (!viewer || !controlPanel?.metadata) return;
-        const startUs = Math.round(startUtcS * 1e6);
-        const endUs = Math.round(endUtcS * 1e6);
-        if (endUs <= startUs) return;
-
-        // Update state and clear for fresh data
-        _currentView = { start_us: startUs, end_us: endUs };
-        chartRenderer._xRange = [startUtcS, endUtcS];
-        chartRenderer._channels = {};
-        chartRenderer._plots.forEach(p => p.destroy());
-        chartRenderer._plots = [];
-        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
-
-        viewer.clearBuffer();
-        viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
-        drawOverview();
-        updateZoomLabel();
-      };
-
-      console.log('Connecting viewer WebSocket...');
       viewer.connect();
-      // Wait for WS to open before sending
       viewer.ws.addEventListener('open', () => {
-        console.log('WebSocket open, selecting device:', serial);
         viewer.selectDevice(serial);
       });
-      viewer.ws.addEventListener('error', (e) => console.error('WS error:', e));
-      viewer.ws.addEventListener('close', (e) => console.log('WS closed:', e.code, e.reason));
     }
 
-    // --- Zoom navigation ---
-    let _fullRange = {};
-    let _currentView = {};
-    let _sessions = [];
-
-    const ZOOM_LEVELS = {
-      'all': 0,
-      'month': 30 * 24 * 3600 * 1e6,
-      'week': 7 * 24 * 3600 * 1e6,
-      'day': 24 * 3600 * 1e6,
-      'hour': 3600 * 1e6,
-      '10min': 600 * 1e6,
-      'min': 60 * 1e6,
-      '10s': 10 * 1e6,
-    };
-
-    function zoomTo(level) {
-      if (!_fullRange.start_us || !viewer) return;
-      document.querySelectorAll('.zbtn').forEach(b => b.classList.remove('active'));
-      event?.target?.classList?.add('active');
-
-      // Clear existing chart data and plots for fresh render at new zoom level
-      if (chartRenderer) {
-        chartRenderer._channels = {};
-        chartRenderer._plots.forEach(p => p.destroy());
-        chartRenderer._plots = [];
-        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
+    function resetZoom() {
+      if (chartRenderer && chartRenderer._chart) {
+        chartRenderer._chart.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
       }
-
-      if (level === 'all') {
-        _currentView = { start_us: _fullRange.start_us, end_us: _fullRange.end_us };
-      } else {
-        const span = ZOOM_LEVELS[level];
-        // Find nearest session center to zoom into
-        let mid = (_currentView.start_us + _currentView.end_us) / 2;
-        if (_sessions.length > 0) {
-          // Find session whose center is nearest to current midpoint
-          let bestDist = Infinity;
-          for (const s of _sessions) {
-            if (!s.start_us) continue;
-            const sMid = (s.start_us + (s.end_us || s.start_us)) / 2;
-            const dist = Math.abs(sMid - mid);
-            if (dist < bestDist) { bestDist = dist; mid = sMid; }
-          }
-        }
-        _currentView = {
-          start_us: Math.max(_fullRange.start_us, Math.round(mid - span / 2)),
-          end_us: Math.min(_fullRange.end_us, Math.round(mid + span / 2)),
-        };
-      }
-
-      if (chartRenderer) chartRenderer._xRange = [_currentView.start_us / 1e6, _currentView.end_us / 1e6];
-      viewer.setView(_currentView.start_us, _currentView.end_us, chartRenderer?.container?.clientWidth || 1200);
-      drawOverview();
-      updateZoomLabel();
     }
 
-    function resetZoom() { zoomTo('all'); }
+    window.addEventListener('resize', () => { if (chartRenderer?._chart) chartRenderer._chart.resize(); });
 
-    function stepView(direction) {
-      // Step by half the current view width
-      if (!_currentView.start_us || !viewer) return;
-      const span = _currentView.end_us - _currentView.start_us;
-      const step = span * 0.5 * direction;
-      _currentView.start_us = Math.max(_fullRange.start_us, _currentView.start_us + step);
-      _currentView.end_us = Math.min(_fullRange.end_us, _currentView.end_us + step);
-
-      // Clear and reload
-      if (chartRenderer) {
-        chartRenderer._channels = {};
-        chartRenderer._plots.forEach(p => p.destroy());
-        chartRenderer._plots = [];
-        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
-        chartRenderer._xRange = [_currentView.start_us / 1e6, _currentView.end_us / 1e6];
-      }
-      viewer.setView(_currentView.start_us, _currentView.end_us, chartRenderer?.container?.clientWidth || 1200);
-      drawOverview();
-      updateZoomLabel();
-    }
-
-    function updateZoomLabel() {
-      const el = document.getElementById('zoom-label');
-      if (!el || !_currentView.start_us) return;
-      const startDate = new Date(_currentView.start_us / 1000);
-      const endDate = new Date(_currentView.end_us / 1000);
-      const durationMs = (_currentView.end_us - _currentView.start_us) / 1000;
-
-      let durStr;
-      if (durationMs > 86400000) durStr = `${(durationMs / 86400000).toFixed(1)} days`;
-      else if (durationMs > 3600000) durStr = `${(durationMs / 3600000).toFixed(1)} hours`;
-      else if (durationMs > 60000) durStr = `${(durationMs / 60000).toFixed(1)} min`;
-      else durStr = `${(durationMs / 1000).toFixed(1)} sec`;
-
-      const fmt = (d) => d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
-      el.textContent = `${fmt(startDate)} — ${fmt(endDate)} (${durStr})`;
-    }
-
-    function drawOverview() {
-      const canvas = document.getElementById('overview-bar');
-      if (!canvas || !_fullRange.start_us) return;
-      const w = canvas.parentElement.clientWidth || 800;
-      const h = 32;
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      const range = _fullRange.end_us - _fullRange.start_us || 1;
-
-      // Background
-      ctx.fillStyle = '#f9fafb';
-      ctx.fillRect(0, 0, w, h);
-
-      // Session blocks
-      const colors = ['#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'];
-      for (let i = 0; i < _sessions.length; i++) {
-        const s = _sessions[i];
-        if (!s.start_us) continue;
-        const x = ((s.start_us - _fullRange.start_us) / range) * w;
-        const sw = Math.max(2, ((s.end_us - s.start_us) / range) * w);
-        ctx.fillStyle = colors[i % colors.length];
-        ctx.fillRect(x, 3, sw, h - 6);
-      }
-
-      // Current view highlight
-      if (_currentView.start_us && _currentView.end_us) {
-        const vx = ((_currentView.start_us - _fullRange.start_us) / range) * w;
-        const vw = Math.max(2, ((_currentView.end_us - _currentView.start_us) / range) * w);
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(vx, 0, vw, h);
-        // Dim outside current view
-        ctx.fillStyle = 'rgba(0,0,0,0.15)';
-        ctx.fillRect(0, 0, vx, h);
-        ctx.fillRect(vx + vw, 0, w - vx - vw, h);
-      }
-
-      // Date labels
-      ctx.fillStyle = '#666';
-      ctx.font = '9px sans-serif';
-      const startD = new Date(_fullRange.start_us / 1000);
-      const endD = new Date(_fullRange.end_us / 1000);
-      ctx.fillText(startD.toLocaleDateString() + ' ' + startD.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}), 4, h - 3);
-      const endLabel = endD.toLocaleDateString() + ' ' + endD.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-      ctx.fillText(endLabel, w - ctx.measureText(endLabel).width - 4, h - 3);
-    }
-
-    // Click on overview bar to navigate
-    document.getElementById('overview-bar')?.addEventListener('click', (e) => {
-      if (!_fullRange.start_us || !viewer) return;
-      const rect = e.target.getBoundingClientRect();
-      const xPct = (e.clientX - rect.left) / rect.width;
-      const clickUs = _fullRange.start_us + xPct * (_fullRange.end_us - _fullRange.start_us);
-      // Clear chart for fresh data at new position
-      if (chartRenderer) {
-        chartRenderer._channels = {};
-        chartRenderer._plots.forEach(p => p.destroy());
-        chartRenderer._plots = [];
-        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
-      }
-      // Center current view window on click point
-      const viewSpan = _currentView.end_us - _currentView.start_us;
-      _currentView = {
-        start_us: Math.max(_fullRange.start_us, Math.round(clickUs - viewSpan / 2)),
-        end_us: Math.min(_fullRange.end_us, Math.round(clickUs + viewSpan / 2)),
-      };
-      if (chartRenderer) chartRenderer._xRange = [_currentView.start_us / 1e6, _currentView.end_us / 1e6];
-      viewer.setView(_currentView.start_us, _currentView.end_us, chartRenderer?.container?.clientWidth || 1200);
-      drawOverview();
-      updateZoomLabel();
-    });
-
-    // Responsive resize
-    window.addEventListener('resize', () => {
-      if (chartRenderer) chartRenderer.resize();
-      drawOverview();
-    });
-
-    // Init
     if (!TOKEN) {
       document.getElementById('device-list').innerHTML = '<span class="error">No token. Use the URL from <code>movesense serve</code>.</span>';
     } else {
