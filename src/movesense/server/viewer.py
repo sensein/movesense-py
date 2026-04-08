@@ -165,6 +165,27 @@ class StoredDataSource:
         if not all_time:
             return None
 
+        # Sort by time and insert nulls at gaps between sessions
+        if len(all_time) > 1:
+            # Pair time+values, sort by time
+            paired = sorted(zip(all_time, all_values), key=lambda x: x[0])
+            sorted_time = []
+            sorted_values = []
+            for i, (t, v) in enumerate(paired):
+                if i > 0:
+                    dt = t - paired[i-1][0]
+                    # Insert null gap marker if gap > 10 seconds
+                    if dt > 10:
+                        # Add null point just after previous and just before current
+                        sorted_time.append(paired[i-1][0] + 0.001)
+                        sorted_values.append(None)
+                        sorted_time.append(t - 0.001)
+                        sorted_values.append(None)
+                sorted_time.append(t)
+                sorted_values.append(v)
+            all_time = sorted_time
+            all_values = sorted_values
+
         return {
             "type": "data",
             "channel": channel,

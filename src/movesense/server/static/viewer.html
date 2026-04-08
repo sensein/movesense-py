@@ -113,6 +113,12 @@
 
       viewer.onData = (pkt) => {
         chartRenderer.update(pkt);
+        // After data arrives, set X range to current view (in UTC seconds)
+        if (_currentView.start_us && _currentView.end_us) {
+          setTimeout(() => {
+            chartRenderer.setXRange(_currentView.start_us / 1e6, _currentView.end_us / 1e6);
+          }, 100);
+        }
       };
 
       viewer.onStatus = (status) => {
@@ -197,6 +203,12 @@
       if (!_fullRange.start_us || !viewer) return;
       document.querySelectorAll('.zbtn').forEach(b => b.classList.remove('active'));
       event?.target?.classList?.add('active');
+
+      // Clear existing chart data for fresh render at new zoom level
+      if (chartRenderer) {
+        chartRenderer._channels = {};
+        chartRenderer._xRange = null;
+      }
 
       if (level === 'all') {
         _currentView = { start_us: _fullRange.start_us, end_us: _fullRange.end_us };
@@ -287,6 +299,8 @@
       const rect = e.target.getBoundingClientRect();
       const xPct = (e.clientX - rect.left) / rect.width;
       const clickUs = _fullRange.start_us + xPct * (_fullRange.end_us - _fullRange.start_us);
+      // Clear chart for fresh data at new position
+      if (chartRenderer) { chartRenderer._channels = {}; chartRenderer._xRange = null; }
       // Center current view window on click point
       const viewSpan = _currentView.end_us - _currentView.start_us;
       _currentView = {

@@ -82,7 +82,7 @@ class ChartRenderer {
 
   update(packet) {
     const ch = packet.channel;
-    const isMulti = Array.isArray(packet.values[0]) && packet.values[0].length > 1;
+    const isMulti = Array.isArray(packet.values[0]) && packet.values[0] != null && packet.values[0].length > 1;
     const axes = isMulti ? packet.values[0].length : 1;
 
     if (packet.source === 'live' && this._channels[ch]) {
@@ -90,7 +90,6 @@ class ChartRenderer {
       const existing = this._channels[ch];
       existing.time = existing.time.concat(packet.time);
       existing.values = existing.values.concat(packet.values);
-      // Trim to last 30 seconds
       if (existing.time.length > 1) {
         const maxT = existing.time[existing.time.length - 1];
         const cutoff = maxT - 30;
@@ -103,13 +102,30 @@ class ChartRenderer {
       }
       existing.source = 'live';
     } else {
-      // Store mode: replace data
+      // Store mode: replace data for this channel
+      // If this is a new view response (not prefetch), mark for clearing stale channels
+      if (!packet.prefetch) this._pendingViewChannels = (this._pendingViewChannels || new Set()).add(ch);
       this._channels[ch] = {
         time: packet.time, values: packet.values,
         axes, unit: packet.unit || '', source: packet.source,
       };
     }
-    this._render();
+
+    // Debounce render — wait for all channels to arrive before re-rendering
+    clearTimeout(this._renderTimer);
+    this._renderTimer = setTimeout(() => {
+      this._render();
+      // Apply stored X range after render (zoom state)
+      if (this._xRange) {
+        this._plots.forEach(p => p.setScale('x', { min: this._xRange[0], max: this._xRange[1] }));
+      }
+    }, 50);
+  }
+
+  /** Set the visible X range (UTC seconds) after rendering */
+  setXRange(startUtcS, endUtcS) {
+    this._xRange = [startUtcS, endUtcS];
+    this._plots.forEach(p => p.setScale('x', { min: startUtcS, max: endUtcS }));
   }
 
   clear() {
@@ -160,21 +176,22 @@ class ChartRenderer {
       el.style.marginBottom = isLast ? '0' : '-1px';
       this.container.appendChild(el);
 
-      // Build series
+      // Build series — use regular arrays (not typed) to support null gap markers
       const series = [{}];
-      const plotData = [new Float64Array(ch.time)];
+      const plotData = [ch.time]; // regular array, not Float64Array
       const axisLabels = ch.axes === 3 ? ['x','y','z'] :
         ch.axes === 9 ? ['Ax','Ay','Az','Gx','Gy','Gz','Mx','My','Mz'] :
         [name.split('/').pop() || name];
 
-      if (ch.axes > 1 && Array.isArray(ch.values[0])) {
+      if (ch.axes > 1) {
+        const hasMulti = Array.isArray(ch.values[0]);
         for (let a = 0; a < ch.axes; a++) {
-          series.push({ label: axisLabels[a], stroke: VC_COLORS[(idx*3+a) % VC_COLORS.length], width: 1, spanGaps: true });
-          plotData.push(new Float32Array(ch.values.map(r => r[a])));
+          series.push({ label: axisLabels[a], stroke: VC_COLORS[(idx*3+a) % VC_COLORS.length], width: 1, spanGaps: false });
+          plotData.push(ch.values.map(r => r === null ? null : (hasMulti ? r[a] : r)));
         }
       } else {
-        series.push({ label: axisLabels[0], stroke: VC_COLORS[idx % VC_COLORS.length], width: 1, spanGaps: true });
-        plotData.push(new Float32Array(ch.values));
+        series.push({ label: axisLabels[0], stroke: VC_COLORS[idx % VC_COLORS.length], width: 1, spanGaps: false });
+        plotData.push(ch.values); // nulls preserved in regular array
       }
 
       const shortName = name.split('/').pop() || name;
