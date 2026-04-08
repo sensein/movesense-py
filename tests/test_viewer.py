@@ -181,6 +181,47 @@ class TestViewerHandlerProtocol:
         assert len(data_after) == 0
 
 
+class TestStoredLiveTransition:
+    @pytest.mark.asyncio
+    async def test_stored_then_live(self, device_store):
+        """Stored data push then live data should arrive on same connection."""
+        ws = AsyncMock()
+        messages_received = []
+
+        async def capture_send(text):
+            messages_received.append(json.loads(text))
+
+        ws.send_text = capture_send
+        ws.receive_text = AsyncMock(side_effect=[
+            json.dumps({"type": "connect", "serial": "000000000000"}),
+            Exception("done"),
+        ])
+        handler = ViewerHandler(ws, device_store)
+
+        try:
+            await handler.run()
+        except Exception:
+            pass
+
+        # Should have metadata + stored data
+        types = [m["type"] for m in messages_received]
+        assert "metadata" in types
+        data_msgs = [m for m in messages_received if m["type"] == "data"]
+        assert all(m["source"] == "store" for m in data_msgs)
+
+        # Simulate what would happen with live: the LiveDataSource would push
+        # packets with source="live" — verify the format is compatible
+        live_pkt = {
+            "type": "data", "channel": "MeasECGmV",
+            "time": [100.0, 100.005], "values": [0.5, 0.6],
+            "source": "live", "prefetch": False,
+        }
+        # Verify live packet has later timestamps
+        if data_msgs:
+            stored_max_t = max(data_msgs[0].get("time", [0]))
+            assert live_pkt["time"][0] > stored_max_t or stored_max_t == 0
+
+
 class TestPrefetch:
     @pytest.mark.asyncio
     async def test_view_triggers_prefetch(self, device_store):

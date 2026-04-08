@@ -99,17 +99,40 @@
         document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
       };
 
-      // Zoom handler: send view message to server
+      // Zoom handler: check prefetch buffer, then request from server
+      let _lastZoomRange = null;
       chartRenderer.onZoom = (startS, endS) => {
-        // Convert seconds to µs (relative to time_range start)
-        // For now, we use the raw seconds as time values from the server
-        // The server handles the mapping
         if (viewer && controlPanel && controlPanel.metadata) {
           const tr = controlPanel.metadata.time_range;
           if (tr && tr.start_us) {
             const startUs = tr.start_us + Math.round(startS * 1e6);
             const endUs = tr.start_us + Math.round(endS * 1e6);
-            viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
+
+            // Invalidate buffer on >2x zoom change
+            if (_lastZoomRange) {
+              const oldRange = _lastZoomRange[1] - _lastZoomRange[0];
+              const newRange = endUs - startUs;
+              if (oldRange / newRange > 2 || newRange / oldRange > 2) {
+                viewer.clearBuffer();
+              }
+            }
+            _lastZoomRange = [startUs, endUs];
+
+            // Check prefetch buffer for each selected channel
+            const selected = controlPanel.getSelected();
+            let allBuffered = true;
+            for (const ch of selected) {
+              const cached = viewer.checkBuffer(ch, startS, endS);
+              if (cached) {
+                chartRenderer.update(cached);
+              } else {
+                allBuffered = false;
+              }
+            }
+            // Request from server if not fully buffered
+            if (!allBuffered) {
+              viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
+            }
           }
         }
       };

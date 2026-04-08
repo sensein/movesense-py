@@ -82,14 +82,33 @@ class ChartRenderer {
 
   update(packet) {
     const ch = packet.channel;
-    const isMulti = Array.isArray(packet.values[0]);
-    this._channels[ch] = {
-      time: packet.time,
-      values: packet.values,
-      axes: isMulti ? packet.values[0].length : 1,
-      unit: packet.unit || '',
-      source: packet.source,
-    };
+    const isMulti = Array.isArray(packet.values[0]) && packet.values[0].length > 1;
+    const axes = isMulti ? packet.values[0].length : 1;
+
+    if (packet.source === 'live' && this._channels[ch]) {
+      // Live mode: append data, trim to window
+      const existing = this._channels[ch];
+      existing.time = existing.time.concat(packet.time);
+      existing.values = existing.values.concat(packet.values);
+      // Trim to last 30 seconds
+      if (existing.time.length > 1) {
+        const maxT = existing.time[existing.time.length - 1];
+        const cutoff = maxT - 30;
+        let trimIdx = 0;
+        while (trimIdx < existing.time.length && existing.time[trimIdx] < cutoff) trimIdx++;
+        if (trimIdx > 0) {
+          existing.time = existing.time.slice(trimIdx);
+          existing.values = existing.values.slice(trimIdx);
+        }
+      }
+      existing.source = 'live';
+    } else {
+      // Store mode: replace data
+      this._channels[ch] = {
+        time: packet.time, values: packet.values,
+        axes, unit: packet.unit || '', source: packet.source,
+      };
+    }
     this._render();
   }
 
