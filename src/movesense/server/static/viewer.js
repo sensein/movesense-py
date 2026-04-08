@@ -206,6 +206,20 @@ class ChartRenderer {
       }
     });
 
+    // Add session block markers to the first channel row (visual context)
+    if (this._sessions && this._sessions.length > 0) {
+      const sessionColors = ['rgba(59,130,246,0.08)', 'rgba(34,197,94,0.08)', 'rgba(245,158,11,0.08)', 'rgba(139,92,246,0.08)', 'rgba(239,68,68,0.08)'];
+      const markAreaData = this._sessions.filter(s => s.start_us > 0).map((s, i) => [{
+        xAxis: s.start_us / 1000, // ms for ECharts
+        itemStyle: { color: sessionColors[i % sessionColors.length] },
+      }, {
+        xAxis: (s.end_us || s.start_us + 60000000) / 1000,
+      }]);
+      if (series.length > 0 && markAreaData.length > 0) {
+        series[0].markArea = { silent: true, data: markAreaData };
+      }
+    }
+
     const option = {
       animation: false,
       grid: grids,
@@ -214,7 +228,13 @@ class ChartRenderer {
       series,
       tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
       dataZoom: [
-        { type: 'slider', xAxisIndex: xAxes.map((_, i) => i), bottom: 5, height: 20, filterMode: 'none' },
+        { type: 'slider', xAxisIndex: xAxes.map((_, i) => i), bottom: 5, height: 25,
+          showDataShadow: true, filterMode: 'none',
+          labelFormatter: (val) => {
+            const d = new Date(val);
+            return d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+          }
+        },
         { type: 'inside', xAxisIndex: xAxes.map((_, i) => i), filterMode: 'none' },
       ],
     };
