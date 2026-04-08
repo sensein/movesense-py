@@ -242,38 +242,35 @@ class ChartRenderer {
         if (self.onZoom) self.onZoom(c - nr * xPct, c + nr * (1 - xPct));
       }, { passive: false });
 
-      // Drag to pan (mousedown + mousemove)
-      let panStart = null;
+      // Drag to pan — uses shared state from ChartRenderer (not per-plot)
       el.addEventListener('mousedown', (e) => {
-        // Only pan with left button, no modifier keys (shift+drag = zoom via uPlot select)
         if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
         const rect = el.getBoundingClientRect();
-        if (e.clientX - rect.left < 50) return; // Don't pan from Y-axis area
-        panStart = { x: e.clientX, xMin: plot.scales.x.min, xMax: plot.scales.x.max };
+        if (e.clientX - rect.left < 50) return;
+        // Use _xRange or first plot's scale as reference (consistent across all rows)
+        const ref = self._xRange || (self._plots[0] ? [self._plots[0].scales.x.min, self._plots[0].scales.x.max] : null);
+        if (!ref) return;
+        self._panStart = { x: e.clientX, xMin: ref[0], xMax: ref[1] };
         el.style.cursor = 'grabbing';
       });
       el.addEventListener('mousemove', (e) => {
-        if (!panStart) return;
-        const dx = e.clientX - panStart.x;
+        if (!self._panStart) return;
+        const dx = e.clientX - self._panStart.x;
         const pxRange = el.clientWidth;
-        const valRange = panStart.xMax - panStart.xMin;
+        const valRange = self._panStart.xMax - self._panStart.xMin;
         const shift = -(dx / pxRange) * valRange;
-        const newMin = panStart.xMin + shift;
-        const newMax = panStart.xMax + shift;
+        const newMin = self._panStart.xMin + shift;
+        const newMax = self._panStart.xMax + shift;
         self._plots.forEach(p => p.setScale('x', { min: newMin, max: newMax }));
       });
       const endPan = (e) => {
-        if (!panStart) return;
+        if (!self._panStart) return;
         el.style.cursor = '';
-        const dx = e.clientX - panStart.x;
-        const pxRange = el.clientWidth;
-        const valRange = panStart.xMax - panStart.xMin;
-        const shift = -(dx / pxRange) * valRange;
-        panStart = null;
-        // If dragged more than 5px, trigger a view update
-        if (Math.abs(dx) > 5) {
-          const newMin = plot.scales.x.min;
-          const newMax = plot.scales.x.max;
+        const dx = e.clientX - self._panStart.x;
+        self._panStart = null;
+        if (Math.abs(dx) > 5 && self._plots[0]) {
+          const newMin = self._plots[0].scales.x.min;
+          const newMax = self._plots[0].scales.x.max;
           if (self.onZoom) self.onZoom(newMin, newMax);
         }
       };
