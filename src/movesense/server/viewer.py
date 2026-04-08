@@ -57,18 +57,46 @@ class StoredDataSource:
                         "axes": ch_meta.get("axes", 1),
                     }
 
-        # Time range
-        start_us_vals = [s.get("start_utc_us", 0) for s in sessions_idx.values() if s.get("start_utc_us")]
-        end_us_vals = [s.get("end_utc_us", 0) for s in sessions_idx.values() if s.get("end_utc_us")]
+        # Fill missing timestamps from prov log
+        import json as _json
+        prov_file = store_path.parent / "prov.jsonl"
+        prov_dates = {}  # session_index → fetched_at ISO string
+        if prov_file.exists():
+            for line in prov_file.read_text().strip().split("\n"):
+                try:
+                    entry = _json.loads(line)
+                    si = entry.get("session_index")
+                    if si is not None and entry.get("fetched_at"):
+                        prov_dates[si] = entry["fetched_at"]
+                except Exception:
+                    pass
 
         sessions_list = []
         for idx_str, summary in sorted(sessions_idx.items(), key=lambda x: int(x[0])):
+            idx = int(idx_str)
+            start_us = summary.get("start_utc_us", 0)
+            end_us = summary.get("end_utc_us", 0)
+
+            # Fallback: estimate from prov fetched_at + duration
+            if not start_us and idx in prov_dates:
+                from datetime import datetime as dt, timezone as tz
+                try:
+                    fetched = dt.fromisoformat(prov_dates[idx].replace("Z", "+00:00"))
+                    start_us = int(fetched.timestamp() * 1_000_000)
+                    dur_s = summary.get("duration_seconds", 0)
+                    end_us = start_us + int(dur_s * 1_000_000) if dur_s else start_us + 60_000_000  # default 1 min
+                except Exception:
+                    pass
+
             sessions_list.append({
-                "index": int(idx_str),
-                "start_us": summary.get("start_utc_us", 0),
-                "end_us": summary.get("end_utc_us", 0),
+                "index": idx,
+                "start_us": start_us,
+                "end_us": end_us,
                 "channels": list(summary.get("channels", {}).keys()),
             })
+
+        start_us_vals = [s["start_us"] for s in sessions_list if s["start_us"] > 0]
+        end_us_vals = [s["end_us"] for s in sessions_list if s["end_us"] > 0]
 
         # Device info from first session group attrs
         device_info = {"name": "Movesense", "firmware": "unknown", "battery": None}
