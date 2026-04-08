@@ -675,6 +675,21 @@ def create_app(data_dir: Path) -> FastAPI:
         """Return current stream state so the UI can recover after refresh."""
         return stream_manager._status_message()
 
+    # --- Viewer WebSocket (server-driven protocol for stored + live data) ---
+
+    @app.websocket("/ws/viewer")
+    async def websocket_viewer(ws: WebSocket):
+        from .viewer import ViewerHandler
+
+        ws_token = ws.query_params.get("token", "")
+        if ws_token != get_active_token():
+            await ws.close(code=1008, reason="Authentication failed")
+            return
+
+        await ws.accept()
+        handler = ViewerHandler(ws, data_dir, stream_manager=stream_manager)
+        await handler.run()
+
     @app.websocket("/ws/stream")
     async def websocket_stream(ws: WebSocket):
         # Validate token from query param
@@ -729,8 +744,20 @@ def create_app(data_dir: Path) -> FastAPI:
         # 1x1 transparent PNG favicon
         return Response(content=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n\xb4\x00\x00\x00\x00IEND\xaeB`\x82', media_type="image/png")
 
+    @app.get("/viewer", response_class=HTMLResponse)
+    async def viewer_page():
+        """Server-driven streaming viewer (spec 011)."""
+        viewer_html = STATIC_DIR / "viewer.html"
+        if viewer_html.exists():
+            return viewer_html.read_text()
+        return "<h1>Viewer not found</h1>"
+
     @app.get("/", response_class=HTMLResponse)
     async def root():
+        # Default to viewer
+        viewer_html = STATIC_DIR / "viewer.html"
+        if viewer_html.exists():
+            return viewer_html.read_text()
         index = STATIC_DIR / "index.html"
         if index.exists():
             return index.read_text()
