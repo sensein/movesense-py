@@ -221,26 +221,8 @@ class ChartRenderer {
             font: '9px sans-serif', label: `${shortName} ${ch.unit ? '('+ch.unit+')' : ''}`, labelFont: '9px sans-serif', labelSize: 10 },
         ],
         cursor: { sync: { key: self._syncKey, setSeries: false }, drag: { x: false, y: false } },
-        select: { show: true },
+        select: { show: false },
         legend: { show: false },
-        hooks: {
-          setSelect: [(u) => {
-            if (u.select.width >= 5) {
-              const left = u.posToVal(u.select.left, 'x');
-              const right = u.posToVal(u.select.left + u.select.width, 'x');
-              if (right - left > 0.001) {
-                self._plots.forEach(p => p.setScale('x', { min: left, max: right }));
-                if (self.onZoom) self.onZoom(left, right);
-              }
-            }
-            if (u.select.height >= 5) {
-              const yT = u.posToVal(u.select.top, 'y');
-              const yB = u.posToVal(u.select.top + u.select.height, 'y');
-              u.setScale('y', { min: Math.min(yT, yB), max: Math.max(yT, yB) });
-            }
-            u.setSelect({ left:0, top:0, width:0, height:0 }, false);
-          }],
-        },
       };
 
       const plot = new uPlot(opts, plotData, el);
