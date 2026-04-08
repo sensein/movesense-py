@@ -124,14 +124,14 @@
         document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
       };
 
-      // Zoom handler: check prefetch buffer, then request from server
+      // Zoom handler: chart X-axis is now UTC seconds
       let _lastZoomRange = null;
-      chartRenderer.onZoom = (startS, endS) => {
+      chartRenderer.onZoom = (startUtcS, endUtcS) => {
         if (viewer && controlPanel && controlPanel.metadata) {
-          const tr = controlPanel.metadata.time_range;
-          if (tr && tr.start_us) {
-            const startUs = tr.start_us + Math.round(startS * 1e6);
-            const endUs = tr.start_us + Math.round(endS * 1e6);
+            // Chart values are UTC seconds — convert to µs for server
+            const startUs = Math.round(startUtcS * 1e6);
+            const endUs = Math.round(endUtcS * 1e6);
+            if (endUs <= startUs) return;
 
             // Invalidate buffer on >2x zoom change
             if (_lastZoomRange) {
@@ -147,7 +147,7 @@
             const selected = controlPanel.getSelected();
             let allBuffered = true;
             for (const ch of selected) {
-              const cached = viewer.checkBuffer(ch, startS, endS);
+              const cached = viewer.checkBuffer(ch, startUtcS, endUtcS);
               if (cached) {
                 chartRenderer.update(cached);
               } else {
@@ -163,7 +163,6 @@
             if (!allBuffered) {
               viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
             }
-          }
         }
       };
 

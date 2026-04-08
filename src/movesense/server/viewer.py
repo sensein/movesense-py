@@ -94,7 +94,10 @@ class StoredDataSource:
         }
 
     def query(self, serial: str, start_us: int, end_us: int, channel: str, buckets: int) -> Optional[dict]:
-        """Query stored data for a channel in a time range."""
+        """Query stored data for a channel in a time range.
+
+        Returns time as absolute UTC seconds (for calendar-aware X-axis).
+        """
         from .timeline import query_timeline
 
         result = query_timeline(
@@ -108,19 +111,22 @@ class StoredDataSource:
         if not result or not result.get("segments"):
             return None
 
-        # Merge segments into a single data packet
+        # Merge segments into a single data packet with absolute UTC time
         all_time = []
         all_values = []
         for seg in result["segments"]:
             if seg.get("type") == "gap":
                 continue
             data = seg.get("data", {})
+            seg_start_us = seg.get("start_utc_us", 0)
             if data.get("time"):
-                all_time.extend(data["time"])
+                # Convert relative seconds to absolute UTC seconds
+                for t in data["time"]:
+                    utc_s = seg_start_us / 1_000_000 + t
+                    all_time.append(round(utc_s, 6))
                 if data.get("values"):
                     all_values.extend(data["values"])
                 elif data.get("columns"):
-                    # Multi-axis: collect column data
                     for i in range(len(data["time"])):
                         row = []
                         for col in data["columns"]:

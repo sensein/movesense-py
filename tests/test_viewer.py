@@ -211,15 +211,16 @@ class TestStoredLiveTransition:
 
         # Simulate what would happen with live: the LiveDataSource would push
         # packets with source="live" — verify the format is compatible
-        live_pkt = {
-            "type": "data", "channel": "MeasECGmV",
-            "time": [100.0, 100.005], "values": [0.5, 0.6],
-            "source": "live", "prefetch": False,
-        }
-        # Verify live packet has later timestamps
-        if data_msgs:
-            stored_max_t = max(data_msgs[0].get("time", [0]))
-            assert live_pkt["time"][0] > stored_max_t or stored_max_t == 0
+        # Simulate live data: timestamps must be after stored data
+        if data_msgs and data_msgs[0].get("time"):
+            stored_max_t = max(data_msgs[0]["time"])
+            live_pkt = {
+                "type": "data", "channel": "MeasECGmV",
+                "time": [stored_max_t + 1.0, stored_max_t + 1.005],
+                "values": [0.5, 0.6],
+                "source": "live", "prefetch": False,
+            }
+            assert live_pkt["time"][0] > stored_max_t
 
 
 class TestPrefetch:

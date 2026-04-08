@@ -181,10 +181,20 @@ class ChartRenderer {
       const opts = {
         width, height: isLast ? rowH + 28 : rowH,
         series,
-        scales: { x: { time: false }, y: { auto: true } },
+        scales: { x: { time: true }, y: { auto: true } },
         axes: [
-          { stroke: '#333', grid: { stroke: '#eee' }, size: isLast ? 26 : 0, font: '9px sans-serif',
-            label: isLast ? 'Time (s)' : '', show: isLast, ticks: { show: isLast } },
+          { stroke: '#333', grid: { stroke: '#eee' }, size: isLast ? 30 : 0, font: '9px sans-serif',
+            show: isLast, ticks: { show: isLast },
+            // Adaptive time formatting: dates at wide zoom, HH:MM:SS at narrow
+            values: isLast ? (u, vals) => vals.map(v => {
+              const d = new Date(v * 1000);
+              const range = u.scales.x.max - u.scales.x.min;
+              if (range > 86400 * 7) return d.toLocaleDateString([], {month:'short', day:'numeric'});
+              if (range > 86400) return d.toLocaleDateString([], {month:'short', day:'numeric'}) + '\n' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+              if (range > 3600) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+              if (range > 60) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+              return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) + '.' + String(d.getMilliseconds()).padStart(3,'0');
+            }) : null },
           { stroke: VC_COLORS[idx % VC_COLORS.length], grid: { stroke: '#f5f5f5' }, size: 45,
             font: '9px sans-serif', label: `${shortName} ${ch.unit ? '('+ch.unit+')' : ''}`, labelFont: '9px sans-serif', labelSize: 10 },
         ],
