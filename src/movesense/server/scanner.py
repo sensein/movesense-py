@@ -71,7 +71,25 @@ class DataScanner:
             for idx_str, summary in sorted(sessions_idx.items(), key=lambda x: int(x[0])):
                 idx = int(idx_str)
                 start_utc = summary.get("start_utc", "")
-                date_str = start_utc[:10] if len(start_utc) >= 10 else "unknown"
+                date_str = start_utc[:10] if len(start_utc) >= 10 and not start_utc.startswith("0") else None
+
+                # Fallback: check prov.jsonl for fetch date
+                if not date_str:
+                    import json as _json
+                    prov_file = store_path.parent / "prov.jsonl"
+                    if prov_file.exists():
+                        for line in prov_file.read_text().strip().split("\n"):
+                            try:
+                                entry = _json.loads(line)
+                                if entry.get("session_index") == idx:
+                                    fetched = entry.get("fetched_at", "")
+                                    if len(fetched) >= 10:
+                                        date_str = fetched[:10]
+                                        break
+                            except Exception:
+                                continue
+                if not date_str:
+                    date_str = "unknown"
 
                 # Extract channel details from the session group
                 try:

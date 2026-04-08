@@ -254,10 +254,26 @@ class UnifiedChart {
   resume() { this._paused = false; }
 
   async captureScreenshot() {
-    if (!this._plot) return null;
-    const canvas = this._plot.ctx.canvas;
+    const plots = this._plots || (this._plot ? [this._plot] : []);
+    if (plots.length === 0) return null;
+
+    // Composite all canvases into one
+    const canvases = plots.map(p => p.ctx.canvas);
+    const totalHeight = canvases.reduce((h, c) => h + c.height, 0);
+    const maxWidth = Math.max(...canvases.map(c => c.width));
+
+    const offscreen = document.createElement('canvas');
+    offscreen.width = maxWidth;
+    offscreen.height = totalHeight;
+    const ctx = offscreen.getContext('2d');
+    let y = 0;
+    for (const c of canvases) {
+      ctx.drawImage(c, 0, y);
+      y += c.height;
+    }
+
     return new Promise(resolve => {
-      canvas.toBlob(blob => {
+      offscreen.toBlob(blob => {
         if (blob) {
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
@@ -380,7 +396,10 @@ class UnifiedChart {
   }
 
   _render() {
+    // Destroy existing plots
+    if (this._plots) { this._plots.forEach(p => p.destroy()); }
     if (this._plot) { this._plot.destroy(); this._plot = null; }
+    this._plots = [];
     this.container.innerHTML = '';
 
     const visibleChannels = this._channels.filter(c => c.visible);
@@ -390,168 +409,139 @@ class UnifiedChart {
     }
 
     const width = this.container.clientWidth || 800;
-    const height = this._calcHeight();
+    const rowHeight = Math.max(100, Math.min(160, 600 / visibleChannels.length));
     const self = this;
+    const syncKey = 'uc-sync-' + Math.random().toString(36).slice(2, 8);
 
-    // Build series config
-    const series = [{ label: 'Time (s)' }];
-    const scales = { x: { time: false } };
-    const axes = [{ stroke: '#333', grid: { stroke: '#eee' }, size: 30, font: '10px sans-serif', label: 'Time (s)' }];
+    // Create one uPlot per channel row, stacked vertically
+    visibleChannels.forEach((ch, chIdx) => {
+      const isLast = chIdx === visibleChannels.length - 1;
+      const el = document.createElement('div');
+      el.style.marginBottom = isLast ? '0' : '-1px'; // Tight stacking
+      this.container.appendChild(el);
 
-    // Assign Y-axes: one per visible channel, stacked via scale names
-    let yAxisCount = 0;
-    for (const ch of visibleChannels) {
-      const scaleName = `y_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
-      ch.yAxisIdx = yAxisCount + 1; // axes[0] is X
-      scales[scaleName] = { auto: true };
-
-      axes.push({
-        scale: scaleName,
-        stroke: ch.color,
-        grid: { stroke: yAxisCount === 0 ? '#f0f0f0' : 'transparent' }, // Only first channel gets grid
-        size: 50,
-        font: '9px sans-serif',
-        label: `${ch.name.split('/').pop()} ${ch.unit ? '(' + ch.unit + ')' : ''}`,
-        labelFont: '9px sans-serif',
-        labelSize: 12,
-      });
+      // Build series for this channel
+      const plotSeries = [{}]; // Time series (no label to save space)
+      const plotData = [this._data[0]]; // Shared time array
 
       for (let a = 0; a < ch.axes; a++) {
         const si = ch.seriesIndices[a];
-        const colorBase = UC_COLORS[(this._channels.indexOf(ch) * 3 + a) % UC_COLORS.length];
-        series[si] = {
+        const color = UC_COLORS[(this._channels.indexOf(ch) * 3 + a) % UC_COLORS.length];
+        plotSeries.push({
           label: ch.labels[a],
-          scale: scaleName,
-          stroke: colorBase,
+          stroke: color,
           width: 1,
           show: ch.axisVisible[a],
           spanGaps: true,
-        };
+        });
+        plotData.push(this._data[si]);
       }
 
-      yAxisCount++;
-    }
-
-    // Fill missing series slots
-    for (let i = 1; i < this._data.length; i++) {
-      if (!series[i]) {
-        series[i] = { show: false, label: '', scale: 'y_hidden' };
-      }
-    }
-    if (!scales['y_hidden']) scales['y_hidden'] = { auto: true };
-
-    const opts = {
-      width, height, series, scales, axes,
-      cursor: { drag: { x: false, y: false } },
-      select: { show: true },
-      hooks: {
-        setSelect: [
-          (u) => {
-            if (u.select.width < 5 && u.select.height < 5) return;
-
-            // X-zoom (shared across all channels)
-            if (u.select.width >= 5) {
-              const left = u.posToVal(u.select.left, 'x');
-              const right = u.posToVal(u.select.left + u.select.width, 'x');
-              if (right - left > 0.001) {
-                self._zoomRange = [left, right];
-                u.setScale('x', { min: left, max: right });
-                if (self.onZoomChange) self.onZoomChange(left, right);
-              }
-            }
-
-            // Per-channel Y-zoom (if drag is more vertical than horizontal)
-            if (u.select.height >= 5) {
-              // Find which channel's Y-scale the drag is in
-              for (const ch of self._channels.filter(c => c.visible)) {
-                const scaleName = `y_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
-                try {
-                  const yTop = u.posToVal(u.select.top, scaleName);
-                  const yBot = u.posToVal(u.select.top + u.select.height, scaleName);
-                  if (yTop != null && yBot != null) {
-                    const yMin = Math.min(yTop, yBot);
-                    const yMax = Math.max(yTop, yBot);
-                    if (yMax - yMin > 0) {
-                      u.setScale(scaleName, { min: yMin, max: yMax });
-                      break; // Only zoom one channel per drag
-                    }
-                  }
-                } catch (e) { /* scale not found */ }
-              }
-            }
-
-            u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
-          }
+      const shortName = ch.name.split('/').pop() || ch.name;
+      const opts = {
+        width,
+        height: isLast ? rowHeight + 30 : rowHeight, // Extra space for X-axis on last row
+        series: plotSeries,
+        scales: { x: { time: false }, y: { auto: true } },
+        axes: [
+          {
+            stroke: '#333', grid: { stroke: '#eee' },
+            size: isLast ? 28 : 0,  // Only show X-axis on last row
+            font: '9px sans-serif',
+            label: isLast ? 'Time (s)' : '',
+            show: isLast,
+            ticks: { show: isLast },
+          },
+          {
+            stroke: ch.color || '#333',
+            grid: { stroke: '#f5f5f5' },
+            size: 50, font: '9px sans-serif',
+            label: `${shortName} ${ch.unit ? '(' + ch.unit + ')' : ''}`,
+            labelFont: '9px sans-serif',
+            labelSize: 10,
+          },
         ],
-        drawClear: [
-          (u) => {
-            // Draw gap regions as gray bands
-            if (self._gaps.length === 0) return;
-            const ctx = u.ctx;
-            const xMin = u.scales.x.min;
-            const xMax = u.scales.x.max;
-            for (const gap of self._gaps) {
-              if (gap.endS < xMin || gap.startS > xMax) continue;
-              const left = Math.max(u.valToPos(gap.startS, 'x'), u.bbox.left);
-              const right = Math.min(u.valToPos(gap.endS, 'x'), u.bbox.left + u.bbox.width);
-              if (right > left) {
-                ctx.fillStyle = 'rgba(0,0,0,0.06)';
-                ctx.fillRect(left, u.bbox.top, right - left, u.bbox.height);
+        cursor: {
+          sync: { key: syncKey, setSeries: false },
+          drag: { x: false, y: false },
+        },
+        select: { show: true },
+        legend: { show: false }, // Compact: no per-row legend
+        hooks: {
+          setSelect: [
+            (u) => {
+              if (u.select.width < 5 && u.select.height < 5) return;
+              // X-zoom: sync across all rows
+              if (u.select.width >= 5) {
+                const left = u.posToVal(u.select.left, 'x');
+                const right = u.posToVal(u.select.left + u.select.width, 'x');
+                if (right - left > 0.001) {
+                  self._zoomRange = [left, right];
+                  self._plots.forEach(p => p.setScale('x', { min: left, max: right }));
+                  if (self.onZoomChange) self.onZoomChange(left, right);
+                }
+              }
+              // Y-zoom: only this row
+              if (u.select.height >= 5) {
+                const yTop = u.posToVal(u.select.top, 'y');
+                const yBot = u.posToVal(u.select.top + u.select.height, 'y');
+                if (yTop != null && yBot != null) {
+                  u.setScale('y', { min: Math.min(yTop, yBot), max: Math.max(yTop, yBot) });
+                }
+              }
+              u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+            }
+          ],
+          drawClear: [
+            (u) => {
+              if (self._gaps.length === 0) return;
+              const ctx = u.ctx;
+              for (const gap of self._gaps) {
+                if (gap.endS < u.scales.x.min || gap.startS > u.scales.x.max) continue;
+                const left = Math.max(u.valToPos(gap.startS, 'x'), u.bbox.left);
+                const right = Math.min(u.valToPos(gap.endS, 'x'), u.bbox.left + u.bbox.width);
+                if (right > left) {
+                  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+                  ctx.fillRect(left, u.bbox.top, right - left, u.bbox.height);
+                }
               }
             }
-          }
-        ],
-      },
-      legend: { show: true },
-    };
+          ],
+        },
+      };
 
-    // Scroll wheel zoom
-    const el = document.createElement('div');
-    this.container.appendChild(el);
+      const plot = new uPlot(opts, plotData, el);
+      this._plots.push(plot);
 
-    this._plot = new uPlot(opts, this._data, el);
+      // Scroll wheel X-zoom (synced across all rows)
+      el.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        const xPct = (e.clientX - rect.left) / rect.width;
+        const xMin = plot.scales.x.min;
+        const xMax = plot.scales.x.max;
+        const range = xMax - xMin;
+        const factor = e.deltaY > 0 ? 1.3 : 0.7;
+        const newRange = Math.max(0.1, range * factor);
+        const center = xMin + range * xPct;
+        const newMin = center - newRange * xPct;
+        const newMax = center + newRange * (1 - xPct);
+        self._plots.forEach(p => p.setScale('x', { min: newMin, max: newMax }));
+        self._zoomRange = [newMin, newMax];
+        if (self.onZoomChange) self.onZoomChange(newMin, newMax);
+      }, { passive: false });
 
-    el.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const xPct = (e.clientX - rect.left) / rect.width;
-      const xMin = self._plot.scales.x.min;
-      const xMax = self._plot.scales.x.max;
-      const range = xMax - xMin;
-      const factor = e.deltaY > 0 ? 1.3 : 0.7;
-      const newRange = Math.max(0.1, range * factor);
-      const center = xMin + range * xPct;
-      const newMin = center - newRange * xPct;
-      const newMax = center + newRange * (1 - xPct);
-      self._plot.setScale('x', { min: newMin, max: newMax });
-      self._zoomRange = [newMin, newMax];
-      if (self.onZoomChange) self.onZoomChange(newMin, newMax);
-    }, { passive: false });
-
-    // Legend click-to-toggle axis visibility
-    const legendItems = el.querySelectorAll('.u-legend .u-series');
-    legendItems.forEach((item, idx) => {
-      if (idx === 0) return; // skip time series
-      item.style.cursor = 'pointer';
-      item.addEventListener('click', () => {
-        const current = self._plot.series[idx].show;
-        self._plot.setSeries(idx, { show: !current });
+      // Double-click Y-axis to reset auto-scale
+      el.addEventListener('dblclick', (e) => {
+        const rect = el.getBoundingClientRect();
+        if (e.clientX - rect.left < 60) {
+          plot.setScale('y', { auto: true });
+        }
       });
     });
 
-    // Double-click on Y-axis area to reset that channel's Y-scale to auto
-    el.addEventListener('dblclick', (e) => {
-      const rect = el.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      // If click is in the Y-axis area (left 60px), reset the nearest channel's Y-scale
-      if (x < 60) {
-        for (const ch of self._channels.filter(c => c.visible)) {
-          const scaleName = `y_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
-          // Reset to auto by setting scale to auto range
-          self._plot.setScale(scaleName, { auto: true });
-        }
-      }
-    });
+    // Store first plot as _plot for backward compat (screenshot, etc.)
+    this._plot = this._plots[0] || null;
   }
 }
 

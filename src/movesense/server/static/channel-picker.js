@@ -34,21 +34,17 @@ class ChannelPicker {
   _render() {
     if (!this.container) return;
 
-    let html = '<div class="channel-picker">';
-    html += '<div style="font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;">Channels</div>';
-    html += '<div style="margin-bottom:0.5rem;font-size:0.7rem;">';
-    html += '<button onclick="channelPicker.selectAll()" style="font-size:0.7rem;padding:2px 6px;">All</button> ';
-    html += '<button onclick="channelPicker.selectNone()" style="font-size:0.7rem;padding:2px 6px;">None</button>';
-    html += '</div>';
+    let html = '<div class="channel-picker" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;">';
+    html += '<span style="font-size:0.8rem;font-weight:600;">Channels:</span>';
+    html += '<button onclick="channelPicker.selectAll()" style="font-size:0.7rem;padding:1px 5px;">All</button>';
+    html += '<button onclick="channelPicker.selectNone()" style="font-size:0.7rem;padding:1px 5px;">None</button>';
 
     for (const ch of this._channels) {
       const checked = this._selected.has(ch.name) ? 'checked' : '';
-      const rate = ch.rate_hz ? `${ch.rate_hz}Hz` : '';
-      const count = ch.session_count ? `${ch.session_count} sessions` : '';
-      html += `<label class="ch-picker-item" style="display:block;font-size:0.8rem;padding:3px 0;cursor:pointer;">
+      const rate = ch.rate_hz ? ` ${Math.round(ch.rate_hz)}Hz` : '';
+      html += `<label style="font-size:0.8rem;cursor:pointer;white-space:nowrap;">
         <input type="checkbox" ${checked} onchange="channelPicker._toggle('${ch.name}', this.checked)">
-        ${ch.name.split('/').pop() || ch.name}
-        <span style="color:#999;font-size:0.7rem">${rate} ${count}</span>
+        ${ch.name.split('/').pop() || ch.name}<span style="color:#999;font-size:0.7rem">${rate}</span>
       </label>`;
     }
 
