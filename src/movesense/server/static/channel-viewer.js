@@ -141,15 +141,64 @@ class ChannelViewer {
       buckets = Math.min(Math.ceil(dur * ch.sampling_rate_hz), 10000);
     }
 
+    // Check pre-fetch cache first
+    const cacheKey = `${ch.name}:${this.viewRange ? this.viewRange[0].toFixed(3) : 'full'}:${this.viewRange ? this.viewRange[1].toFixed(3) : 'full'}`;
+    if (this._prefetchCache && this._prefetchCache[cacheKey]) {
+      this._createChart(el, ch, this._prefetchCache[cacheKey]);
+      this._triggerPrefetch(ch, buckets);
+      return;
+    }
+
     let url = `/devices/${serial}/dates/${date}/sessions/${logId}/channels/${ch.name}/downsample?buckets=${buckets}`;
     if (this.viewRange) url += `&start=${this.viewRange[0]}&end=${this.viewRange[1]}`;
 
     try {
       const ds = await apiFetch(url);
       this._createChart(el, ch, ds);
+      // Trigger pre-fetch of adjacent windows
+      this._triggerPrefetch(ch, buckets);
     } catch (e) {
       el.innerHTML = `<div class="error">${e.message}</div>`;
     }
+  }
+
+  _triggerPrefetch(ch, buckets) {
+    if (!this.viewRange || !this.session) return;
+    if (!this._prefetchCache) this._prefetchCache = {};
+
+    const { serial, date, logId } = this.session;
+    const [vStart, vEnd] = this.viewRange;
+    const windowSize = vEnd - vStart;
+
+    // Pre-fetch: one window ahead and one behind
+    const ranges = [
+      [vStart - windowSize, vStart],  // behind
+      [vEnd, vEnd + windowSize],      // ahead
+    ];
+
+    for (const [pStart, pEnd] of ranges) {
+      if (pStart < 0) continue;
+      const key = `${ch.name}:${pStart.toFixed(3)}:${pEnd.toFixed(3)}`;
+      if (this._prefetchCache[key]) continue;
+
+      // Use requestIdleCallback if available, else setTimeout
+      const fetchFn = () => {
+        const url = `/devices/${serial}/dates/${date}/sessions/${logId}/channels/${ch.name}/downsample?buckets=${buckets}&start=${pStart}&end=${pEnd}`;
+        apiFetch(url).then(ds => {
+          this._prefetchCache[key] = ds;
+        }).catch(() => {}); // silent fail for pre-fetch
+      };
+
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(fetchFn);
+      } else {
+        setTimeout(fetchFn, 100);
+      }
+    }
+  }
+
+  _invalidatePrefetch() {
+    this._prefetchCache = {};
   }
 
   _createChart(el, ch, ds) {
@@ -224,8 +273,13 @@ class ChannelViewer {
             const left = u.posToVal(u.select.left, 'x');
             const right = u.posToVal(u.select.left + u.select.width, 'x');
             if (right - left > 0.0001) {
-              // X zoom is synchronized
+              // X zoom is synchronized — invalidate prefetch if zoom changed significantly
               self._syncing = true;
+              const oldRange = self.viewRange ? self.viewRange[1] - self.viewRange[0] : Infinity;
+              const newRange = right - left;
+              if (oldRange / newRange > 2 || newRange / oldRange > 2) {
+                self._invalidatePrefetch();
+              }
               self.viewRange = [left, right];
               self._updateRangeLabel();
               self._renderCharts().then(() => {

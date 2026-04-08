@@ -483,6 +483,113 @@ def live(serial_numbers, paths, duration):
 
 
 @cli.command()
+@_serial_option
+@_data_dir_option
+def migrate(serial_numbers, data_dir):
+    """Migrate old per-session Zarr stores to single DeviceStore layout.
+
+    Scans {serial}/{date}/*.zarr directories, creates {serial}/data.zarr
+    with session groups, and moves SBEM files to the blob store.
+    Original files are preserved until you manually delete them.
+    """
+    import re
+    from .storage import BlobStore, DeviceStore, ProvLog
+    from .json2zarr import convert_json_to_zarr
+
+    data_path = Path(data_dir)
+    for serial in _resolve_serials(serial_numbers):
+        serial_dir = data_path / serial
+        if not serial_dir.exists():
+            click.echo(f"No data directory for {serial}")
+            continue
+
+        store_path = serial_dir / "data.zarr"
+        if store_path.exists():
+            click.echo(f"{serial}: data.zarr already exists, skipping")
+            continue
+
+        blob_store = BlobStore(serial_dir)
+        prov = ProvLog(serial_dir)
+        device_store = DeviceStore(serial_dir)
+        device_store.open()
+
+        log_pattern = re.compile(r"Movesense_log_(\d+)_(.+)\.zarr$")
+        migrated = 0
+
+        for date_dir in sorted(serial_dir.iterdir()):
+            if not date_dir.is_dir() or not re.match(r"\d{4}-\d{2}-\d{2}$", date_dir.name):
+                continue
+            for zarr_dir in sorted(date_dir.iterdir()):
+                m = log_pattern.match(zarr_dir.name)
+                if not m:
+                    continue
+                log_id = int(m.group(1))
+
+                # Check for corresponding SBEM
+                sbem_file = date_dir / zarr_dir.name.replace(".zarr", ".sbem")
+                if sbem_file.exists() and sbem_file.stat().st_size > 0:
+                    blob_hash = blob_store.store(sbem_file)
+                else:
+                    blob_hash = ""
+
+                # Check for JSON to re-convert
+                json_file = date_dir / zarr_dir.name.replace(".zarr", ".json")
+                session_idx = device_store.next_session_index()
+
+                if json_file.exists():
+                    group = device_store.add_session(session_idx)
+                    convert_json_to_zarr(json_file, None, device_serial=serial,
+                                        session_group=group, source_blob_hash=blob_hash)
+                    channels_meta = dict(group.attrs.get("channels", {}))
+                    device_store.update_sessions_index(session_idx, {
+                        "channels": channels_meta, "start_utc": f"{date_dir.name}T00:00:00.000000Z",
+                    })
+                else:
+                    # Copy Zarr data directly (no JSON available)
+                    import zarr
+                    old_store = zarr.open_group(str(zarr_dir), mode="r")
+                    group = device_store.add_session(session_idx, dict(old_store.attrs))
+                    for ch_name in old_store:
+                        zarr.copy(old_store[ch_name], group, name=ch_name)
+                    device_store.update_sessions_index(session_idx, {
+                        "channels": {}, "start_utc": f"{date_dir.name}T00:00:00.000000Z",
+                    })
+
+                if blob_hash:
+                    prov.record(blob_hash, sbem_file.name if sbem_file.exists() else "", serial, log_id,
+                                session_idx, [], "migrated")
+
+                migrated += 1
+                click.echo(f"  Migrated log {log_id} ({date_dir.name}) → session {session_idx}")
+
+        device_store.close()
+        click.echo(f"{serial}: migrated {migrated} sessions to data.zarr")
+
+
+@cli.command(name="rebuild-prov")
+@_serial_option
+@_data_dir_option
+def rebuild_prov(serial_numbers, data_dir):
+    """Rebuild provenance log by scanning blob store."""
+    from .storage import BlobStore, ProvLog, content_hash
+
+    data_path = Path(data_dir)
+    for serial in _resolve_serials(serial_numbers):
+        serial_dir = data_path / serial
+        blob_store = BlobStore(serial_dir)
+        prov = ProvLog(serial_dir)
+
+        hashes = blob_store.rebuild_index()
+        added = 0
+        for h in hashes:
+            if not prov.has_hash(h):
+                prov.record(h, "", serial, 0, -1, [], "rebuilt", 0)
+                added += 1
+
+        click.echo(f"{serial}: {len(hashes)} blobs found, {added} new prov records added")
+
+
+@cli.command()
 @_data_dir_option
 @click.option("--port", default=8585, show_default=True, help="Server port")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Server host")
