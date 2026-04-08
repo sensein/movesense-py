@@ -204,17 +204,30 @@
       document.querySelectorAll('.zbtn').forEach(b => b.classList.remove('active'));
       event?.target?.classList?.add('active');
 
-      // Clear existing chart data for fresh render at new zoom level
+      // Clear existing chart data and plots for fresh render at new zoom level
       if (chartRenderer) {
         chartRenderer._channels = {};
+        chartRenderer._plots.forEach(p => p.destroy());
+        chartRenderer._plots = [];
+        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
       }
 
       if (level === 'all') {
         _currentView = { start_us: _fullRange.start_us, end_us: _fullRange.end_us };
       } else {
         const span = ZOOM_LEVELS[level];
-        // Center on current view midpoint
-        const mid = (_currentView.start_us + _currentView.end_us) / 2;
+        // Find nearest session center to zoom into
+        let mid = (_currentView.start_us + _currentView.end_us) / 2;
+        if (_sessions.length > 0) {
+          // Find session whose center is nearest to current midpoint
+          let bestDist = Infinity;
+          for (const s of _sessions) {
+            if (!s.start_us) continue;
+            const sMid = (s.start_us + (s.end_us || s.start_us)) / 2;
+            const dist = Math.abs(sMid - mid);
+            if (dist < bestDist) { bestDist = dist; mid = sMid; }
+          }
+        }
         _currentView = {
           start_us: Math.max(_fullRange.start_us, Math.round(mid - span / 2)),
           end_us: Math.min(_fullRange.end_us, Math.round(mid + span / 2)),
