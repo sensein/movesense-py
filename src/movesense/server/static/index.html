@@ -191,7 +191,8 @@
               <option value="60">60s</option>
             </select>
           </label>
-          <button onclick="chartManager && chartManager.resetZoom()" id="btn-reset-zoom" style="display:none;font-size:0.75rem;">Reset Zoom</button>
+          <button onclick="if(chartManager && chartManager._plot) chartManager._plot.setScale('x', {min: chartManager._data[0][0], max: chartManager._data[0][chartManager._data[0].length-1]})" id="btn-reset-zoom" style="font-size:0.75rem;">Reset Zoom</button>
+          <button onclick="chartManager && chartManager.captureScreenshot()" style="font-size:0.75rem;" title="Save chart as PNG">📷</button>
           <span id="stream-zoom-label" style="display:none;font-size:0.75rem;color:#2563eb;"></span>
         </div>
         <div style="font-size:0.7rem;color:#999;margin:0.25rem 0;">Drag to zoom X+Y · Scroll wheel to zoom time · Shift+drag to pan (when paused)</div>
@@ -222,10 +223,11 @@
       return resp.json();
     }
   </script>
-  <script src="/static/channel-viewer.js?v=20260405r"></script>
-  <script src="/static/calendar.js?v=20260405r"></script>
-  <script src="/static/stream.js?v=20260405r"></script>
-  <script src="/static/app.js?v=20260405r"></script>
+  <script src="/static/unified-chart.js?v=20260408a"></script>
+  <script src="/static/timeline-bar.js?v=20260408a"></script>
+  <script src="/static/channel-picker.js?v=20260408a"></script>
+  <script src="/static/calendar.js?v=20260408a"></script>
+  <script src="/static/app.js?v=20260408a"></script>
   <script>
     // Tab switching
     function switchTab(tab) {
@@ -269,7 +271,7 @@
 
     // === Live Stream Tab Logic ===
     let streamClient = null;
-    let chartManager = null;
+    let chartManager = null; // UnifiedChart instance
     let connectedSerial = sessionStorage.getItem('ms_connected_serial') || null;
     let deviceState = null;
     let originalConfig = []; // config paths as read from device
@@ -711,9 +713,9 @@
     }
 
     function _setupWebSocket() {
-      chartManager = new ChartManager('charts');
+      chartManager = new UnifiedChart('charts', { mode: 'live', windowSeconds: 10 });
       streamClient = new StreamClient(
-        (msg) => chartManager.addData(msg.channel, msg.values, msg.unit, msg.axes, msg.timestamp),
+        (msg) => chartManager.addData(msg.channel, msg.values, msg.timestamp, msg.unit, msg.axes),
         (msg) => {
           // Handle ack messages
           if (msg.type === 'ack' && _pendingAck) { _pendingAck(msg); return; }
@@ -1007,17 +1009,8 @@
       document.getElementById('btn-pause').textContent = _streamPaused ? '▶' : '⏸';
       document.getElementById('btn-pause').title = _streamPaused ? 'Resume' : 'Pause';
       if (chartManager) {
-        chartManager._paused = _streamPaused;
-        if (_streamPaused) {
-          for (const ch of Object.values(chartManager.charts)) {
-            if (ch.data[0].length > 0 && chartManager._zoomEnd == null) {
-              chartManager._zoomEnd = ch.data[0][ch.data[0].length - 1];
-              break;
-            }
-          }
-        } else {
-          chartManager._zoomEnd = null;
-        }
+        if (_streamPaused) chartManager.pause();
+        else chartManager.resume();
       }
     }
 
@@ -1039,7 +1032,9 @@
     }
 
     function setTimeWindow() {
-      if (chartManager) chartManager.setWindow(parseInt(document.getElementById('time-window').value));
+      if (chartManager) {
+        chartManager.windowSeconds = parseInt(document.getElementById('time-window').value);
+      }
     }
 
     // On page load: try to reconnect to an active stream

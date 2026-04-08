@@ -1,4 +1,39 @@
 /**
+ * StreamClient: WebSocket client for live BLE data streaming.
+ * TOKEN is defined in the global init block (index.html).
+ */
+class StreamClient {
+  constructor(onData, onStatus, onError) {
+    this.ws = null;
+    this.onData = onData;
+    this.onStatus = onStatus;
+    this.onError = onError;
+  }
+  connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    this.ws = new WebSocket(`${proto}//${location.host}/ws/stream?token=${TOKEN}`);
+    this.ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'data') this.onData(msg);
+        else if (msg.type === 'ack') this.onStatus(msg);
+        else if (msg.type === 'status') this.onStatus(msg);
+        else if (msg.type === 'error') this.onError(msg.message);
+        else if (msg.type === 'device_info') this.onStatus(msg);
+      } catch (err) {}
+    };
+    this.ws.onclose = () => this.onStatus({ type: 'status', state: 'disconnected' });
+    this.ws.onerror = () => this.onError('WebSocket connection failed');
+  }
+  send(msg) { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg)); }
+  startStream(serial, channels) { this.send({ type: 'start', serial, channels }); }
+  stopStream() { this.send({ type: 'stop' }); }
+  disconnect() { if (this.ws) this.ws.close(); }
+}
+
+window.StreamClient = StreamClient;
+
+/**
  * UnifiedChart: stacked multi-channel display with shared X-axis.
  * Replaces channel-viewer.js (Data Browser) and stream.js (Live Stream).
  *

@@ -67,8 +67,8 @@ async function showSessions(serial, date) {
   } catch (e) { content.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
-let channelViewer = null;
-window.channelViewer = null;
+let dataChart = null;
+let channelPicker = null;
 
 async function showChannels(serial, date, logId) {
   subtitle.textContent = `Log ${logId}`;
@@ -80,16 +80,59 @@ async function showChannels(serial, date, logId) {
   ]);
 
   content.innerHTML = `
-    <div class="cv-layout">
-      <div class="cv-sidebar" id="cv-selector"></div>
-      <div class="cv-charts" id="cv-charts"></div>
-      <div class="cv-stats" id="cv-stats"></div>
+    <div style="display:flex;gap:1rem;align-items:flex-start;">
+      <div id="data-picker" style="min-width:160px;"></div>
+      <div style="flex:1;">
+        <div style="margin-bottom:0.5rem;">
+          <button onclick="if(dataChart&&dataChart._plot)dataChart._plot.setScale('x',{min:dataChart._data[0][0],max:dataChart._data[0][dataChart._data[0].length-1]})" style="font-size:0.75rem;">Reset Zoom</button>
+          <button onclick="dataChart&&dataChart.captureScreenshot()" style="font-size:0.75rem;">📷</button>
+        </div>
+        <div id="data-chart"></div>
+      </div>
     </div>`;
 
-  if (typeof ChannelViewer !== 'undefined') {
-    channelViewer = new ChannelViewer('cv-selector', 'cv-charts', 'cv-stats');
-    window.channelViewer = channelViewer;
-    channelViewer.load(serial, date, logId);
+  // Load channel metadata
+  try {
+    const meta = await apiFetch(`/devices/${serial}/dates/${date}/sessions/${logId}/channels`);
+    const channels = meta.channels || [];
+
+    // Setup channel picker
+    if (typeof ChannelPicker !== 'undefined') {
+      channelPicker = new ChannelPicker('data-picker', {
+        onToggle: (ch, enabled) => loadSessionData(serial, date, logId),
+      });
+      window.channelPicker = channelPicker;
+      channelPicker.setChannels(channels.map(c => ({
+        name: c.name, rate_hz: c.sampling_rate_hz, unit: c.unit || '',
+      })));
+    }
+
+    // Setup chart and load data
+    if (typeof UnifiedChart !== 'undefined') {
+      dataChart = new UnifiedChart('data-chart', { mode: 'static' });
+      await loadSessionData(serial, date, logId);
+    }
+  } catch (e) { content.innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+async function loadSessionData(serial, date, logId) {
+  if (!dataChart) return;
+  const selected = channelPicker ? channelPicker.getSelected() : [];
+  if (!selected.length) { dataChart.clear(); return; }
+
+  dataChart.clear();
+
+  // Load each channel via downsample API
+  for (const chName of selected) {
+    try {
+      const ds = await apiFetch(`/devices/${serial}/dates/${date}/sessions/${logId}/channels/${chName}/downsample?buckets=2000`);
+      if (ds.data && ds.data.time) {
+        dataChart.loadSegments([{
+          session_index: logId, channel: chName,
+          data: ds.data, rate_hz: ds.sampling_rate_hz,
+        }], [chName]);
+      }
+    } catch (e) { /* skip failed channels */ }
   }
 }
 
