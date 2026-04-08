@@ -124,7 +124,7 @@ class ChartRenderer {
       this._chart = echarts.init(this.container, null, { height: Math.max(300, 130 * chNames.length + 80) });
       const self = this;
       this._chart.on('datazoom', function(params) {
-        // Fire view change callback with the visible time range
+        if (self._suppressZoomEvent) return;
         const opt = self._chart.getOption();
         const dz = opt.dataZoom[0];
         if (dz && self.onViewChange) {
@@ -239,7 +239,30 @@ class ChartRenderer {
       ],
     };
 
+    // Preserve dataZoom range across re-renders
+    let savedZoom = null;
+    if (this._chart.getOption().dataZoom) {
+      const dz = this._chart.getOption().dataZoom[0];
+      if (dz && (dz.start !== 0 || dz.end !== 100)) {
+        savedZoom = { startValue: dz.startValue, endValue: dz.endValue };
+      }
+    }
+
     this._chart.setOption(option, true);
+
+    // Restore zoom state (suppress event to prevent loop)
+    if (savedZoom) {
+      this._suppressZoomEvent = true;
+      this._chart.dispatchAction({
+        type: 'dataZoom', dataZoomIndex: 0,
+        startValue: savedZoom.startValue, endValue: savedZoom.endValue,
+      });
+      this._chart.dispatchAction({
+        type: 'dataZoom', dataZoomIndex: 1,
+        startValue: savedZoom.startValue, endValue: savedZoom.endValue,
+      });
+      setTimeout(() => { this._suppressZoomEvent = false; }, 100);
+    }
   }
 }
 

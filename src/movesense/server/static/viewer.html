@@ -81,14 +81,19 @@
         chartRenderer.update(pkt);
       };
 
-      // ECharts dataZoom fires view change → request fresh data from server
+      // ECharts dataZoom — pan/zoom is local (no server round-trip)
+      // Server already sent overview data for full range on connect.
+      // Only request fresh data when zooming IN past a threshold (higher resolution needed)
+      let _lastDataRange = null;
       chartRenderer.onViewChange = (startUtcS, endUtcS) => {
-        if (viewer) {
+        if (!viewer) return;
+        const range = endUtcS - startUtcS;
+        // Request higher-res data when zoomed to < 10 minutes AND range changed significantly
+        if (range < 600 && (!_lastDataRange || Math.abs(range - _lastDataRange) / _lastDataRange > 0.5)) {
+          _lastDataRange = range;
           const startUs = Math.round(startUtcS * 1e6);
           const endUs = Math.round(endUtcS * 1e6);
-          if (endUs > startUs) {
-            viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
-          }
+          viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
         }
       };
 
