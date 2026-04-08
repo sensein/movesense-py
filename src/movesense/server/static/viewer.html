@@ -50,17 +50,17 @@
           return;
         }
         el.innerHTML = data.devices.map(d =>
-          `<button class="device-btn" onclick="selectDevice('${d.serial}')">${d.serial}<br><span style="font-size:0.7rem;color:#999">${d.date_count} dates</span></button>`
+          `<button class="device-btn" onclick="selectDevice('${d.serial}', this)">${d.serial}<br><span style="font-size:0.7rem;color:#999">${d.date_count} dates</span></button>`
         ).join('');
       } catch (e) {
         document.getElementById('device-list').innerHTML = `<span class="error">${e.message}</span>`;
       }
     }
 
-    function selectDevice(serial) {
+    function selectDevice(serial, btn) {
       // Highlight selected
       document.querySelectorAll('.device-btn').forEach(b => b.classList.remove('active'));
-      event.target.closest('.device-btn').classList.add('active');
+      if (btn) btn.classList.add('active');
       currentSerial = serial;
 
       // Setup chart renderer
@@ -114,8 +114,15 @@
         }
       };
 
+      console.log('Connecting viewer WebSocket...');
       viewer.connect();
-      viewer.selectDevice(serial);
+      // Wait for WS to open before sending
+      viewer.ws.addEventListener('open', () => {
+        console.log('WebSocket open, selecting device:', serial);
+        viewer.selectDevice(serial);
+      });
+      viewer.ws.addEventListener('error', (e) => console.error('WS error:', e));
+      viewer.ws.addEventListener('close', (e) => console.log('WS closed:', e.code, e.reason));
     }
 
     function resetZoom() {
