@@ -70,6 +70,16 @@
     .cal-cell.cal-substantial:hover, .cal-cell.cal-partial:hover { opacity: 0.8; }
     .cal-cell.empty { border-color: transparent; }
     .cal-summary { display: flex; gap: 1.5rem; padding: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; font-size: 0.85rem; }
+    /* Responsive layout */
+    .channel-picker { min-width: 140px; }
+    @media (max-width: 799px) {
+      .cv-layout, [style*="display:flex"] { flex-direction: column !important; }
+      .channel-picker { min-width: unset; }
+      .ch-picker-item { display: inline-block !important; margin-right: 0.5rem; }
+    }
+    @media (min-width: 1200px) {
+      .cv-layout { flex-direction: row; }
+    }
   </style>
 </head>
 <body>
@@ -1036,6 +1046,16 @@
         chartManager.windowSeconds = parseInt(document.getElementById('time-window').value);
       }
     }
+
+    // Responsive: resize charts on window resize
+    let _resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(() => {
+        if (chartManager) chartManager.resize();
+        if (typeof dataChart !== 'undefined' && dataChart) dataChart.resize();
+      }, 100);
+    });
 
     // On page load: try to reconnect to an active stream
     _tryReconnect();

@@ -447,14 +447,39 @@ class UnifiedChart {
       hooks: {
         setSelect: [
           (u) => {
-            if (u.select.width < 5) return;
-            const left = u.posToVal(u.select.left, 'x');
-            const right = u.posToVal(u.select.left + u.select.width, 'x');
-            if (right - left > 0.001) {
-              self._zoomRange = [left, right];
-              u.setScale('x', { min: left, max: right });
-              if (self.onZoomChange) self.onZoomChange(left, right);
+            if (u.select.width < 5 && u.select.height < 5) return;
+
+            // X-zoom (shared across all channels)
+            if (u.select.width >= 5) {
+              const left = u.posToVal(u.select.left, 'x');
+              const right = u.posToVal(u.select.left + u.select.width, 'x');
+              if (right - left > 0.001) {
+                self._zoomRange = [left, right];
+                u.setScale('x', { min: left, max: right });
+                if (self.onZoomChange) self.onZoomChange(left, right);
+              }
             }
+
+            // Per-channel Y-zoom (if drag is more vertical than horizontal)
+            if (u.select.height >= 5) {
+              // Find which channel's Y-scale the drag is in
+              for (const ch of self._channels.filter(c => c.visible)) {
+                const scaleName = `y_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+                try {
+                  const yTop = u.posToVal(u.select.top, scaleName);
+                  const yBot = u.posToVal(u.select.top + u.select.height, scaleName);
+                  if (yTop != null && yBot != null) {
+                    const yMin = Math.min(yTop, yBot);
+                    const yMax = Math.max(yTop, yBot);
+                    if (yMax - yMin > 0) {
+                      u.setScale(scaleName, { min: yMin, max: yMax });
+                      break; // Only zoom one channel per drag
+                    }
+                  }
+                } catch (e) { /* scale not found */ }
+              }
+            }
+
             u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
           }
         ],
@@ -503,7 +528,7 @@ class UnifiedChart {
       if (self.onZoomChange) self.onZoomChange(newMin, newMax);
     }, { passive: false });
 
-    // Legend click-to-toggle
+    // Legend click-to-toggle axis visibility
     const legendItems = el.querySelectorAll('.u-legend .u-series');
     legendItems.forEach((item, idx) => {
       if (idx === 0) return; // skip time series
@@ -512,6 +537,20 @@ class UnifiedChart {
         const current = self._plot.series[idx].show;
         self._plot.setSeries(idx, { show: !current });
       });
+    });
+
+    // Double-click on Y-axis area to reset that channel's Y-scale to auto
+    el.addEventListener('dblclick', (e) => {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      // If click is in the Y-axis area (left 60px), reset the nearest channel's Y-scale
+      if (x < 60) {
+        for (const ch of self._channels.filter(c => c.visible)) {
+          const scaleName = `y_${ch.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+          // Reset to auto by setting scale to auto range
+          self._plot.setScale(scaleName, { auto: true });
+        }
+      }
     });
   }
 }
