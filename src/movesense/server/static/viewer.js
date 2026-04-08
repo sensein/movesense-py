@@ -198,7 +198,12 @@ class ChartRenderer {
       const opts = {
         width, height: isLast ? rowH + 28 : rowH,
         series,
-        scales: { x: { time: true }, y: { auto: true } },
+        scales: {
+          x: self._xRange
+            ? { time: true, min: self._xRange[0], max: self._xRange[1] }
+            : { time: true },
+          y: { auto: true },
+        },
         axes: [
           { stroke: '#333', grid: { stroke: '#eee' }, size: isLast ? 30 : 0, font: '9px sans-serif',
             show: isLast, ticks: { show: isLast },

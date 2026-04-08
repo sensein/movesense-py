@@ -207,7 +207,6 @@
       // Clear existing chart data for fresh render at new zoom level
       if (chartRenderer) {
         chartRenderer._channels = {};
-        chartRenderer._xRange = null;
       }
 
       if (level === 'all') {
@@ -222,6 +221,7 @@
         };
       }
 
+      if (chartRenderer) chartRenderer._xRange = [_currentView.start_us / 1e6, _currentView.end_us / 1e6];
       viewer.setView(_currentView.start_us, _currentView.end_us, chartRenderer?.container?.clientWidth || 1200);
       drawOverview();
       updateZoomLabel();
@@ -307,6 +307,7 @@
         start_us: Math.max(_fullRange.start_us, Math.round(clickUs - viewSpan / 2)),
         end_us: Math.min(_fullRange.end_us, Math.round(clickUs + viewSpan / 2)),
       };
+      if (chartRenderer) chartRenderer._xRange = [_currentView.start_us / 1e6, _currentView.end_us / 1e6];
       viewer.setView(_currentView.start_us, _currentView.end_us, chartRenderer?.container?.clientWidth || 1200);
       drawOverview();
       updateZoomLabel();
