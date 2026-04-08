@@ -124,15 +124,17 @@ def _write_stream(store: zarr.Group, name: str, samples: list, normalize_ts: boo
 
     first = samples[0]
 
-    # Extract timestamps and optionally normalize to µs
-    timestamps = []
+    # Extract timestamps (in original device units for rate inference)
+    raw_timestamps = []
     for s in samples:
         ts = s.get("Timestamp", s.get("timestamp", 0))
-        timestamps.append(ts)
+        raw_timestamps.append(ts)
 
-    if timestamps and normalize_ts:
-        # Normalize: device ms → µs
-        timestamps = [t * 1000 for t in timestamps]
+    # Store timestamps — optionally normalized to µs
+    if normalize_ts:
+        timestamps = [t * 1000 for t in raw_timestamps]  # ms → µs
+    else:
+        timestamps = list(raw_timestamps)
 
     if timestamps:
         dtype = np.uint64 if normalize_ts else np.float64
@@ -154,7 +156,7 @@ def _write_stream(store: zarr.Group, name: str, samples: list, normalize_ts: boo
             group.attrs["sensor_type"] = "ECG"
             group.attrs["unit"] = "mV"
             group.attrs["lsb_to_mv"] = 0.000381469726563
-            _infer_sampling_rate(group, timestamps, samples)
+            _infer_sampling_rate(group, raw_timestamps, samples)
             sample_count = len(all_values)
             unit = "mV"
             rate_hz = group.attrs.get("sampling_rate_hz")
@@ -172,7 +174,7 @@ def _write_stream(store: zarr.Group, name: str, samples: list, normalize_ts: boo
                 group.create_array("data", data=arr)
                 group.attrs["sensor_type"] = name
                 group.attrs["shape_description"] = "Nx3 (x, y, z)"
-                _infer_sampling_rate(group, timestamps, samples)
+                _infer_sampling_rate(group, raw_timestamps, samples)
                 sample_count = len(all_xyz)
                 rate_hz = group.attrs.get("sampling_rate_hz")
 
@@ -192,7 +194,7 @@ def _write_stream(store: zarr.Group, name: str, samples: list, normalize_ts: boo
             group.create_array("data", data=arr)
             group.attrs["sensor_type"] = "IMU6"
             group.attrs["shape_description"] = "Nx6 (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z)"
-            _infer_sampling_rate(group, timestamps, samples)
+            _infer_sampling_rate(group, raw_timestamps, samples)
             sample_count = len(all_rows)
             rate_hz = group.attrs.get("sampling_rate_hz")
 
@@ -214,7 +216,7 @@ def _write_stream(store: zarr.Group, name: str, samples: list, normalize_ts: boo
             group.create_array("data", data=arr)
             group.attrs["sensor_type"] = "IMU9"
             group.attrs["shape_description"] = "Nx9 (acc_xyz, gyro_xyz, mag_xyz)"
-            _infer_sampling_rate(group, timestamps, samples)
+            _infer_sampling_rate(group, raw_timestamps, samples)
             sample_count = len(all_rows)
             rate_hz = group.attrs.get("sampling_rate_hz")
 
@@ -287,10 +289,15 @@ def _find_array_key(sample: dict) -> Optional[str]:
 
 
 def _infer_sampling_rate(group: zarr.Group, timestamps: list, samples: list) -> None:
-    """Infer and store sampling rate from timestamps and sample counts."""
+    """Compute and store sampling rate from timestamps and sample counts.
+
+    Uses total samples / total time span for accuracy. Falls back to
+    per-chunk calculation if only 2 timestamps available.
+    """
     if len(timestamps) < 2:
         return
-    # Count total data points in first sample to get samples-per-chunk
+
+    # Count samples per chunk to compute total
     first = samples[0]
     array_key = _find_array_key(first)
     if array_key:
@@ -303,7 +310,23 @@ def _infer_sampling_rate(group: zarr.Group, timestamps: list, samples: list) -> 
     if samples_per_chunk == 0:
         return
 
-    dt_ms = timestamps[1] - timestamps[0]
-    if dt_ms > 0:
-        rate = (samples_per_chunk / dt_ms) * 1000
+    # Use total time span for better accuracy
+    total_samples = samples_per_chunk * len(timestamps)
+    total_dt_ms = timestamps[-1] - timestamps[0]
+    if total_dt_ms > 0:
+        # Rate = total_samples / total_time_seconds
+        # But last chunk's samples aren't counted in the span, so:
+        # rate = (total_samples - samples_per_chunk) / (total_dt_ms / 1000)
+        # Simplified: samples_per_chunk * (len(timestamps) - 1) / (total_dt_ms / 1000)
+        rate = (samples_per_chunk * (len(timestamps) - 1)) / (total_dt_ms / 1000)
+    elif len(timestamps) >= 2:
+        dt_ms = timestamps[1] - timestamps[0]
+        if dt_ms > 0:
+            rate = (samples_per_chunk / dt_ms) * 1000
+        else:
+            return
+    else:
+        return
+
+    if rate > 0:
         group.attrs["sampling_rate_hz"] = round(rate, 1)
