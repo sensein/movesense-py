@@ -133,43 +133,23 @@
       // Zoom handler: chart X-axis is now UTC seconds
       let _lastZoomRange = null;
       chartRenderer.onZoom = (startUtcS, endUtcS) => {
-        if (viewer && controlPanel && controlPanel.metadata) {
-            // Chart values are UTC seconds — convert to µs for server
-            const startUs = Math.round(startUtcS * 1e6);
-            const endUs = Math.round(endUtcS * 1e6);
-            if (endUs <= startUs) return;
+        if (!viewer || !controlPanel?.metadata) return;
+        const startUs = Math.round(startUtcS * 1e6);
+        const endUs = Math.round(endUtcS * 1e6);
+        if (endUs <= startUs) return;
 
-            // Invalidate buffer on >2x zoom change
-            if (_lastZoomRange) {
-              const oldRange = _lastZoomRange[1] - _lastZoomRange[0];
-              const newRange = endUs - startUs;
-              if (oldRange / newRange > 2 || newRange / oldRange > 2) {
-                viewer.clearBuffer();
-              }
-            }
-            _lastZoomRange = [startUs, endUs];
+        // Update state and clear for fresh data
+        _currentView = { start_us: startUs, end_us: endUs };
+        chartRenderer._xRange = [startUtcS, endUtcS];
+        chartRenderer._channels = {};
+        chartRenderer._plots.forEach(p => p.destroy());
+        chartRenderer._plots = [];
+        chartRenderer.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Loading...</div>';
 
-            // Check prefetch buffer for each selected channel
-            const selected = controlPanel.getSelected();
-            let allBuffered = true;
-            for (const ch of selected) {
-              const cached = viewer.checkBuffer(ch, startUtcS, endUtcS);
-              if (cached) {
-                chartRenderer.update(cached);
-              } else {
-                allBuffered = false;
-              }
-            }
-            // Update current view and overview bar
-            _currentView = { start_us: startUs, end_us: endUs };
-            drawOverview();
-            updateZoomLabel();
-
-            // Request from server if not fully buffered
-            if (!allBuffered) {
-              viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
-            }
-        }
+        viewer.clearBuffer();
+        viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
+        drawOverview();
+        updateZoomLabel();
       };
 
       console.log('Connecting viewer WebSocket...');
