@@ -72,6 +72,7 @@
 
       viewer.onMetadata = (meta) => {
         controlPanel.buildFromMetadata(meta);
+        chartRenderer._sessions = meta.sessions || [];
         document.getElementById('status').textContent =
           `${meta.sessions?.length || 0} sessions | ${meta.channels?.length || 0} channels | ${meta.state}`;
       };
