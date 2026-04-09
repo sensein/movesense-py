@@ -87,7 +87,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script src="/static/viewer.js?v=20260408p"></script>
+  <script src="/static/viewer.js?v=20260408q"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
@@ -176,6 +176,15 @@
           if (msg.mode === 'stored') {
             document.getElementById('btn-live').textContent = '● Live';
             document.getElementById('btn-live').style.background = '#22c55e';
+            // Re-enable all channel checkboxes
+            if (controlPanel) controlPanel.buildFromMetadata(controlPanel.metadata);
+          } else if (msg.mode === 'live') {
+            // Update channel checkboxes: only streaming channels enabled
+            const streamChs = new Set((msg.streaming_channels || []).map(p => {
+              // Extract channel name from path: /Meas/Ecg/125/mV → MeasEcgmV-ish
+              return p;
+            }));
+            updateChannelCheckboxesForLive(streamChs);
           }
         } else {
           controlPanel.updateStatus(msg);
@@ -363,6 +372,41 @@
     function respondConfirm(confirmed) {
       document.getElementById('confirm-overlay').style.display = 'none';
       if (viewer) viewer.send({ type: 'confirm_response', confirmed });
+    }
+
+    function updateChannelCheckboxesForLive(streamPaths) {
+      // In live mode, only show channels that are being streamed
+      if (!controlPanel?.metadata) return;
+      const el = document.getElementById('controls');
+      if (!el) return;
+      // Map streaming paths to channel names
+      const activeNames = new Set();
+      for (const path of streamPaths) {
+        const pl = path.toLowerCase();
+        if (pl.includes('ecg')) activeNames.add('MeasECGmV');
+        if (pl.includes('imu9')) activeNames.add('MeasIMU9');
+        if (pl.includes('imu6') && !pl.includes('imu9')) activeNames.add('MeasIMU6');
+        if (pl.includes('/acc/')) activeNames.add('MeasAcc');
+        if (pl.includes('/gyro/')) activeNames.add('MeasGyro');
+        if (pl.includes('temp')) activeNames.add('MeasTemp');
+        if (pl.includes('/hr')) activeNames.add('MeasHR');
+      }
+      // Update checkboxes in control panel
+      const checkboxes = el.querySelectorAll('input[type=checkbox]');
+      checkboxes.forEach(cb => {
+        const label = cb.parentElement?.textContent?.trim() || '';
+        const chName = controlPanel.metadata.channels.find(c =>
+          label.includes(c.name.split('/').pop()))?.name || '';
+        if (activeNames.has(chName)) {
+          cb.checked = true;
+          cb.disabled = false;
+          cb.parentElement.style.opacity = '1';
+        } else {
+          cb.checked = false;
+          cb.disabled = true;
+          cb.parentElement.style.opacity = '0.4';
+        }
+      });
     }
 
     function resetZoom() {

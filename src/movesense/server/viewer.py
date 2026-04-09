@@ -203,12 +203,14 @@ class LiveDataSource:
     def __init__(self):
         self.is_streaming = False
         self._queue: Optional[asyncio.Queue] = None
+        self._utc_base: Optional[float] = None
 
     async def start(self, stream_manager, serial: str, channels: list[str]):
         """Start receiving live data."""
         self._queue = await stream_manager.add_client()
         await stream_manager.start(serial, channels)
         self.is_streaming = True
+        self._utc_base = None  # Reset: set on first data packet
 
     async def stop(self, stream_manager):
         """Stop receiving live data."""
@@ -229,24 +231,24 @@ class LiveDataSource:
                 values = msg.get("values", [])
                 t_seconds = msg.get("timestamp", 0)  # seconds since stream start
 
-                # Convert to absolute UTC seconds for chart X-axis
-                now_utc = time.time()
-                base_utc = now_utc - t_seconds if t_seconds > 0 else now_utc
+                # Set UTC base on first packet
+                if self._utc_base is None:
+                    self._utc_base = time.time() - t_seconds
 
-                # Build time array: one entry per sample
                 # Estimate rate from channel path
-                rate = 200  # default
-                ch_lower = channel.lower()
                 import re
+                rate = 200
                 m = re.search(r'/(\d+)/', channel)
                 if m:
                     rate = int(m.group(1))
-                elif 'hr' in ch_lower or 'temp' in ch_lower:
+                elif 'hr' in channel.lower() or 'temp' in channel.lower():
                     rate = 1
 
+                # Build time array: packet timestamp + sample offset
                 n_samples = len(values) if not isinstance(values[0], list) else len(values)
                 dt = 1.0 / rate
-                time_arr = [now_utc + i * dt for i in range(n_samples)]
+                base_utc = self._utc_base + t_seconds
+                time_arr = [base_utc + i * dt for i in range(n_samples)]
 
                 return {
                     "type": "data",
@@ -257,7 +259,7 @@ class LiveDataSource:
                     "prefetch": False,
                 }
             elif msg.get("type") in ("status", "device_info"):
-                return None  # Skip status messages in live forwarder
+                return None
             return None
         except asyncio.TimeoutError:
             return None
