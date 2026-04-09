@@ -225,15 +225,40 @@ class LiveDataSource:
         try:
             msg = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             if msg.get("type") == "data":
+                channel = msg.get("channel", "")
+                values = msg.get("values", [])
+                t_seconds = msg.get("timestamp", 0)  # seconds since stream start
+
+                # Convert to absolute UTC seconds for chart X-axis
+                now_utc = time.time()
+                base_utc = now_utc - t_seconds if t_seconds > 0 else now_utc
+
+                # Build time array: one entry per sample
+                # Estimate rate from channel path
+                rate = 200  # default
+                ch_lower = channel.lower()
+                import re
+                m = re.search(r'/(\d+)/', channel)
+                if m:
+                    rate = int(m.group(1))
+                elif 'hr' in ch_lower or 'temp' in ch_lower:
+                    rate = 1
+
+                n_samples = len(values) if not isinstance(values[0], list) else len(values)
+                dt = 1.0 / rate
+                time_arr = [now_utc + i * dt for i in range(n_samples)]
+
                 return {
                     "type": "data",
-                    "channel": msg["channel"],
-                    "time": [msg.get("timestamp", 0)],
-                    "values": msg.get("values", []),
+                    "channel": channel,
+                    "time": time_arr,
+                    "values": values,
                     "source": "live",
                     "prefetch": False,
                 }
-            return msg  # status, error, etc.
+            elif msg.get("type") in ("status", "device_info"):
+                return None  # Skip status messages in live forwarder
+            return None
         except asyncio.TimeoutError:
             return None
 
