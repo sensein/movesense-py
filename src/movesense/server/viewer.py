@@ -511,8 +511,16 @@ class ViewerHandler:
 
                 # Probe capabilities
                 capabilities = {}
-                for sid, rates in [("ecg", [125, 200, 250, 500, 512]), ("acc", [13, 26, 52, 104, 208]),
-                                   ("imu9", [13, 26, 52, 104, 208]), ("temp", []), ("hr", [])]:
+                for sid, rates in [
+                    ("ecg", [125, 128, 200, 250, 256, 500, 512]),
+                    ("acc", [13, 26, 52, 104, 208, 416, 833]),
+                    ("gyro", [13, 26, 52, 104, 208, 416, 833]),
+                    ("magn", [13, 26, 52, 104, 208]),
+                    ("imu6", [13, 26, 52, 104, 208, 416, 833]),
+                    ("imu9", [13, 26, 52, 104, 208, 416, 833]),
+                    ("temp", []),
+                    ("hr", []),
+                ]:
                     capabilities[sid] = {"rates": rates}
 
                 self._device_connected = True

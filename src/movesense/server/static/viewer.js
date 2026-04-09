@@ -62,6 +62,7 @@ class ChartRenderer {
   constructor(containerId) {
     this.container = document.getElementById(containerId);
     this._chart = null;
+    this._paused = false;
     this._channels = {};  // name → {time, values, axes, unit, source}
     this.onViewChange = null;  // callback(startUtcS, endUtcS) when user pans/zooms
     this._debounceTimer = null;
@@ -95,6 +96,8 @@ class ChartRenderer {
     }
 
     // Throttle render: at most every 200ms for live, 80ms for stored
+    // When paused, still buffer data but don't render
+    if (this._paused) return;
     const interval = packet.source === 'live' ? 200 : 80;
     if (!this._debounceTimer) {
       this._debounceTimer = setTimeout(() => {

@@ -39,7 +39,9 @@
   <h1>Movesense Viewer</h1>
   <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap;">
     <div id="device-list" class="device-list"></div>
-    <button id="btn-live" onclick="setMode('live')" class="device-btn" style="font-size:0.75rem;display:none;background:#22c55e;color:white;border-color:#22c55e;">● Live</button>
+    <button id="btn-play" onclick="setMode('live')" class="device-btn" style="font-size:0.85rem;display:none;background:#22c55e;color:white;border-color:#22c55e;" title="Start live streaming">▶</button>
+    <button id="btn-pause" onclick="pauseLive()" class="device-btn" style="font-size:0.85rem;display:none;background:#f59e0b;color:white;border-color:#f59e0b;" title="Pause display">⏸</button>
+    <button id="btn-stop" onclick="setMode('stored')" class="device-btn" style="font-size:0.85rem;display:none;background:#ef4444;color:white;border-color:#ef4444;" title="Stop live streaming">⏹</button>
     <button onclick="toggleSettings()" class="device-btn" style="font-size:0.85rem;" title="Settings">⚙ Settings</button>
   </div>
   <div id="controls"></div>
@@ -87,7 +89,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script src="/static/viewer.js?v=20260408s"></script>
+  <script src="/static/viewer.js?v=20260408t"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
@@ -142,10 +144,7 @@
     let _currentMode = 'stored';
     function setMode(mode) {
       if (!viewer) return;
-      // Toggle: if already in live, switch to stored
-      if (mode === 'live' && _currentMode === 'live') {
-        mode = 'stored';
-      }
+      // Play/stop are separate buttons now — no toggle needed
       _currentMode = mode;
       if (mode === 'live') {
         // Get stream channels from settings panel and send to server
@@ -158,23 +157,24 @@
         viewer.send({ type: 'stream_config', channels: streamChannels });
         chartRenderer.clear();
         chartRenderer.enterLiveMode(streamChannels);
-        document.getElementById('btn-live').textContent = '⏹ Stop Live';
-        document.getElementById('btn-live').style.background = '#ef4444';
+        document.getElementById('btn-play').style.display = 'none';
+        document.getElementById('btn-pause').style.display = '';
+        document.getElementById('btn-stop').style.display = '';
       } else {
         chartRenderer.enterStoredMode();
-        document.getElementById('btn-live').textContent = '● Live';
-        document.getElementById('btn-live').style.background = '#22c55e';
+        document.getElementById('btn-play').style.display = '';
+        document.getElementById('btn-pause').style.display = 'none';
+        document.getElementById('btn-stop').style.display = 'none';
       }
       viewer.send({ type: 'mode', mode });
     }
 
     function getStreamChannels() {
       const channels = [];
-      for (const ch of ['ecg', 'imu9', 'acc', 'temp', 'hr']) {
+      for (const ch of ALL_CH_IDS) {
         const chk = document.getElementById('stream-' + ch);
         if (chk?.checked) {
-          const templates = { ecg: '/Meas/Ecg/{rate}/mV', imu9: '/Meas/IMU9/{rate}', acc: '/Meas/Acc/{rate}', temp: '/Meas/Temp', hr: '/Meas/HR' };
-          let path = templates[ch];
+          let path = CH_TEMPLATES[ch];
           const rateSel = document.getElementById('stream-rate-' + ch);
           if (rateSel) path = path.replace('{rate}', rateSel.value);
           channels.push(path);
@@ -225,8 +225,8 @@
         } else if (msg.type === 'mode_changed') {
           _currentMode = msg.mode;
           if (msg.mode === 'stored') {
-            document.getElementById('btn-live').textContent = '● Live';
-            document.getElementById('btn-live').style.background = '#22c55e';
+            document.getElementById('btn-play').style.display = '';
+            document.getElementById('btn-stop').style.display = 'none';
             if (controlPanel) controlPanel.buildFromMetadata(controlPanel.metadata);
           } else if (msg.mode === 'live') {
             const streamChs = new Set(msg.streaming_channels || []);
@@ -272,7 +272,7 @@
         const memStr = s.memory_full ? '<span style="color:#ef4444">FULL</span>' : `${s.memory_pct ?? 0}% used`;
         info.innerHTML = `🔋 ${s.battery ?? '?'}% | v${s.firmware ?? '?'} | ${s.dlstate_name ?? '?'} | ${memStr} | ${s.log_count ?? 0} logs (${((s.total_log_bytes || 0) / 1024).toFixed(0)} KB)`;
         // Show live button (next to device buttons)
-        document.getElementById('btn-live').style.display = '';
+        document.getElementById('btn-play').style.display = '';
         // Show config/recording/data sections
         document.getElementById('logging-config-section').style.display = '';
         document.getElementById('recording-section').style.display = '';
@@ -286,7 +286,7 @@
         if (s.capabilities) buildConfigCheckboxes(s.capabilities, s.logging_config);
       } else {
         info.textContent = 'Not connected';
-        document.getElementById('btn-live').style.display = 'none';
+        document.getElementById('btn-play').style.display = 'none'; document.getElementById('btn-stop').style.display = 'none';
       }
     }
 
@@ -297,11 +297,14 @@
       const streamEl = document.getElementById('stream-channels');
       let logHtml = '', streamHtml = '';
       const channels = [
-        { id: 'ecg', label: 'ECG', path: '/Meas/Ecg/{rate}/mV', rates: capabilities.ecg?.rates || [200] },
-        { id: 'imu9', label: 'IMU9', path: '/Meas/IMU9/{rate}', rates: capabilities.imu9?.rates || [52] },
-        { id: 'acc', label: 'Acc', path: '/Meas/Acc/{rate}', rates: capabilities.acc?.rates || [52] },
-        { id: 'temp', label: 'Temp', path: '/Meas/Temp', rates: [] },
-        { id: 'hr', label: 'HR', path: '/Meas/HR', rates: [] },
+        { id: 'ecg', label: 'ECG (mV)', path: '/Meas/Ecg/{rate}/mV', rates: capabilities.ecg?.rates || [125, 200, 250, 500, 512] },
+        { id: 'acc', label: 'Accelerometer (m/s²)', path: '/Meas/Acc/{rate}', rates: capabilities.acc?.rates || [13, 26, 52, 104, 208] },
+        { id: 'gyro', label: 'Gyroscope (dps)', path: '/Meas/Gyro/{rate}', rates: capabilities.gyro?.rates || [13, 26, 52, 104, 208] },
+        { id: 'magn', label: 'Magnetometer (µT)', path: '/Meas/Magn/{rate}', rates: capabilities.magn?.rates || [13, 26, 52, 104, 208] },
+        { id: 'imu6', label: 'IMU 6-axis (Acc+Gyro)', path: '/Meas/IMU6/{rate}', rates: capabilities.imu6?.rates || capabilities.acc?.rates || [13, 26, 52, 104, 208] },
+        { id: 'imu9', label: 'IMU 9-axis (Acc+Gyro+Mag)', path: '/Meas/IMU9/{rate}', rates: capabilities.imu9?.rates || capabilities.acc?.rates || [13, 26, 52, 104, 208] },
+        { id: 'temp', label: 'Temperature (K)', path: '/Meas/Temp', rates: [] },
+        { id: 'hr', label: 'Heart Rate (bpm)', path: '/Meas/HR', rates: [] },
       ];
       for (const ch of channels) {
         const logChecked = logPaths.some(p => p.includes(ch.id)) ? 'checked' : '';
@@ -315,12 +318,19 @@
       streamEl.innerHTML = streamHtml;
     }
 
+    const ALL_CH_IDS = ['ecg', 'acc', 'gyro', 'magn', 'imu6', 'imu9', 'temp', 'hr'];
+    const CH_TEMPLATES = {
+      ecg: '/Meas/Ecg/{rate}/mV', acc: '/Meas/Acc/{rate}', gyro: '/Meas/Gyro/{rate}',
+      magn: '/Meas/Magn/{rate}', imu6: '/Meas/IMU6/{rate}', imu9: '/Meas/IMU9/{rate}',
+      temp: '/Meas/Temp', hr: '/Meas/HR',
+    };
+
     function applyLoggingConfig() {
       const paths = [];
-      for (const ch of ['ecg', 'imu9', 'acc', 'temp', 'hr']) {
+      for (const ch of ALL_CH_IDS) {
         const chk = document.getElementById(`log-${ch}`);
         if (chk?.checked) {
-          const templates = { ecg: '/Meas/Ecg/{rate}/mV', imu9: '/Meas/IMU9/{rate}', acc: '/Meas/Acc/{rate}', temp: '/Meas/Temp', hr: '/Meas/HR' };
+          const templates = CH_TEMPLATES;
           let path = templates[ch];
           const rateSel = document.getElementById(`log-rate-${ch}`);
           if (rateSel) path = path.replace('{rate}', rateSel.value);
@@ -411,6 +421,23 @@
           cb.parentElement.style.opacity = '0.4';
         }
       });
+    }
+
+    let _livePaused = false;
+    function pauseLive() {
+      _livePaused = !_livePaused;
+      const btn = document.getElementById('btn-pause');
+      if (_livePaused) {
+        btn.textContent = '▶';
+        btn.title = 'Resume live display';
+        btn.style.background = '#22c55e';
+        chartRenderer._paused = true;
+      } else {
+        btn.textContent = '⏸';
+        btn.title = 'Pause display';
+        btn.style.background = '#f59e0b';
+        chartRenderer._paused = false;
+      }
     }
 
     function resetZoom() {
