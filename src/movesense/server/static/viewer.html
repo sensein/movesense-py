@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Movesense Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 1rem; max-width: 1600px; margin: 0 auto; color: #1a1a2e; }
+    h1 { font-size: 1.2rem; margin-bottom: 0.5rem; }
+    .device-list { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+    .device-btn { padding: 0.4rem 1rem; border: 1px solid #ddd; border-radius: 0.25rem; cursor: pointer; font-size: 0.85rem; background: #f9f9f9; }
+    .device-btn:hover { background: #e5e7eb; }
+    .device-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+    .error { color: #ef4444; font-size: 0.85rem; margin: 0.5rem 0; }
+    .status { font-size: 0.8rem; color: #999; }
+  </style>
+</head>
+<body>
+  <h1>Movesense Viewer</h1>
+  <div id="device-list" class="device-list">Loading devices...</div>
+  <div id="controls"></div>
+  <div id="status" class="status"></div>
+  <div id="charts" style="width:100%;"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script src="/static/viewer.js?v=20260408h"></script>
+  <script>
+    const _params = new URLSearchParams(window.location.search);
+    const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
+    if (TOKEN) sessionStorage.setItem('ms_token', TOKEN);
+
+    let viewer = null;
+    let chartRenderer = null;
+    let controlPanel = null;
+
+    async function loadDevices() {
+      try {
+        const resp = await fetch('/api/devices', { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+        if (!resp.ok) throw new Error('Auth failed');
+        const data = await resp.json();
+        const el = document.getElementById('device-list');
+        if (!data.devices.length) {
+          el.innerHTML = '<span class="error">No data. Run <code>movesense fetch</code> first.</span>';
+          return;
+        }
+        el.innerHTML = data.devices.map(d =>
+          `<button class="device-btn" onclick="selectDevice('${d.serial}', this)">${d.serial}<br><span style="font-size:0.7rem;color:#999">${d.date_count} dates</span></button>`
+        ).join('');
+      } catch (e) {
+        document.getElementById('device-list').innerHTML = `<span class="error">${e.message}</span>`;
+      }
+    }
+
+    function selectDevice(serial, btn) {
+      document.querySelectorAll('.device-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+
+      if (chartRenderer) chartRenderer.clear();
+      chartRenderer = new ChartRenderer('charts');
+      window.chartRenderer = chartRenderer;
+
+      controlPanel = new ControlPanel('controls');
+      window.controlPanel = controlPanel;
+      controlPanel.onChannelToggle = (channels) => {
+        if (viewer) viewer.subscribe(channels);
+      };
+
+      if (viewer && viewer.ws) viewer.ws.close();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      viewer = new ViewerClient(`${proto}//${location.host}/ws/viewer?token=${TOKEN}`);
+
+      viewer.onMetadata = (meta) => {
+        controlPanel.buildFromMetadata(meta);
+        chartRenderer._sessions = meta.sessions || [];
+        document.getElementById('status').textContent =
+          `${meta.sessions?.length || 0} sessions | ${meta.channels?.length || 0} channels | ${meta.state}`;
+      };
+
+      viewer.onData = (pkt) => {
+        chartRenderer.update(pkt);
+      };
+
+      // ECharts dataZoom — pan/zoom is local (no server round-trip)
+      // Server already sent overview data for full range on connect.
+      // Only request fresh data when zooming IN past a threshold (higher resolution needed)
+      let _lastDataRange = null;
+      chartRenderer.onViewChange = (startUtcS, endUtcS) => {
+        if (!viewer) return;
+        const range = endUtcS - startUtcS;
+        // Request higher-res data when zoomed to < 10 minutes AND range changed significantly
+        if (range < 600 && (!_lastDataRange || Math.abs(range - _lastDataRange) / _lastDataRange > 0.5)) {
+          _lastDataRange = range;
+          const startUs = Math.round(startUtcS * 1e6);
+          const endUs = Math.round(endUtcS * 1e6);
+          viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
+        }
+      };
+
+      viewer.onStatus = (status) => {
+        controlPanel.updateStatus(status);
+        document.getElementById('status').textContent = status.state || 'unknown';
+      };
+
+      viewer.onError = (msg) => {
+        document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
+      };
+
+      viewer.connect();
+      viewer.ws.addEventListener('open', () => {
+        viewer.selectDevice(serial);
+      });
+    }
+
+    function resetZoom() {
+      if (chartRenderer && chartRenderer._chart) {
+        chartRenderer._chart.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+      }
+    }
+
+    window.addEventListener('resize', () => { if (chartRenderer?._chart) chartRenderer._chart.resize(); });
+
+    if (!TOKEN) {
+      document.getElementById('device-list').innerHTML = '<span class="error">No token. Use the URL from <code>movesense serve</code>.</span>';
+    } else {
+      loadDevices();
+    }
+  </script>
+</body>
+</html>
