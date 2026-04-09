@@ -87,7 +87,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script src="/static/viewer.js?v=20260408j"></script>
+  <script src="/static/viewer.js?v=20260408n"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
@@ -207,12 +207,14 @@
       }
       _currentMode = mode;
       if (mode === 'live') {
-        // Get stream channels from settings panel
+        // Get stream channels from settings panel and send to server
         const streamChannels = getStreamChannels();
         if (!streamChannels.length) {
           document.getElementById('status').innerHTML = '<span class="error">Configure stream channels in Settings first</span>';
           return;
         }
+        // Send stream_config BEFORE mode switch so server knows which channels
+        viewer.send({ type: 'stream_config', channels: streamChannels });
         chartRenderer.clear();
         chartRenderer.enterLiveMode(streamChannels);
         document.getElementById('btn-live').textContent = '⏹ Stop Live';

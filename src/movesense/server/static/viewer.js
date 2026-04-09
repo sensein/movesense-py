@@ -94,8 +94,14 @@ class ChartRenderer {
       this._channels[ch] = { time: packet.time, values: packet.values, axes, unit: packet.unit || '', source: packet.source };
     }
 
-    clearTimeout(this._debounceTimer);
-    this._debounceTimer = setTimeout(() => this._render(), packet.source === 'live' ? 200 : 80);
+    // Throttle render: at most every 200ms for live, 80ms for stored
+    const interval = packet.source === 'live' ? 200 : 80;
+    if (!this._debounceTimer) {
+      this._debounceTimer = setTimeout(() => {
+        this._debounceTimer = null;
+        this._render();
+      }, interval);
+    }
   }
 
   /** Switch to live mode: clear stored channels, prepare for live data */
