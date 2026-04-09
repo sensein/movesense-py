@@ -405,9 +405,14 @@ class ViewerHandler:
             return
         await self._send({"type": "busy", "message": "Starting live stream..."})
         try:
-            await self.live.start(self._stream_manager, self.state.serial, channels)
+            await asyncio.wait_for(
+                self.live.start(self._stream_manager, self.state.serial, channels),
+                timeout=15.0,
+            )
             self.state.mode = "live"
             await self._send({"type": "mode_changed", "mode": "live", "streaming_channels": channels})
+        except asyncio.TimeoutError:
+            await self._send({"type": "error", "message": "BLE connection timed out (15s). Is the device nearby?"})
         except Exception as e:
             await self._send({"type": "error", "message": f"Failed to start stream: {e}"})
         finally:
