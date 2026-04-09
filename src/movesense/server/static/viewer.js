@@ -148,6 +148,18 @@ class ChartRenderer {
     const gridHeight = Math.max(60, Math.min(120, (this.container.clientHeight - 80) / chNames.length));
     let colorIdx = 0;
 
+    // Compute global time range across ALL channels for aligned X axes
+    let globalMinT = Infinity, globalMaxT = -Infinity;
+    for (const ch of Object.values(this._channels)) {
+      if (ch.time.length > 0) {
+        const validTimes = ch.time.filter(t => t != null);
+        if (validTimes.length > 0) {
+          globalMinT = Math.min(globalMinT, validTimes[0] * 1000);
+          globalMaxT = Math.max(globalMaxT, validTimes[validTimes.length - 1] * 1000);
+        }
+      }
+    }
+
     chNames.forEach((name, idx) => {
       const ch = this._channels[name];
       const top = 10 + idx * (gridHeight + 20);
@@ -157,7 +169,9 @@ class ChartRenderer {
       xAxes.push({
         type: 'time',
         gridIndex: idx,
-        show: idx === chNames.length - 1,  // Only bottom row shows X labels
+        min: globalMinT !== Infinity ? globalMinT : undefined,
+        max: globalMaxT !== -Infinity ? globalMaxT : undefined,
+        show: idx === chNames.length - 1,
         axisLabel: { show: idx === chNames.length - 1, fontSize: 9 },
         axisTick: { show: idx === chNames.length - 1 },
         splitLine: { show: true, lineStyle: { color: '#f0f0f0' } },
