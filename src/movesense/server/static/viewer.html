@@ -87,7 +87,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script src="/static/viewer.js?v=20260408q"></script>
+  <script src="/static/viewer.js?v=20260408r"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
@@ -266,7 +266,8 @@
     function updateDeviceStatus(s) {
       const info = document.getElementById('device-info');
       if (s.connected) {
-        info.innerHTML = `🔋 ${s.battery ?? '?'}% | v${s.firmware ?? '?'} | ${s.dlstate_name ?? '?'} | ${s.memory_pct ?? 0}% mem`;
+        const memStr = s.memory_full ? '<span style="color:#ef4444">FULL</span>' : `${s.memory_pct ?? 0}% used`;
+        info.innerHTML = `🔋 ${s.battery ?? '?'}% | v${s.firmware ?? '?'} | ${s.dlstate_name ?? '?'} | ${memStr} | ${s.log_count ?? 0} logs (${((s.total_log_bytes || 0) / 1024).toFixed(0)} KB)`;
         // Show live button (next to device buttons)
         document.getElementById('btn-live').style.display = '';
         // Show config/recording/data sections

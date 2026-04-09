@@ -487,6 +487,28 @@ class ViewerHandler:
                         except Exception:
                             continue
 
+                # Get log count and memory status
+                log_count = 0
+                total_log_bytes = 0
+                memory_full = False
+                try:
+                    log_list = await sensor.get_log_list()
+                    if log_list.get("success"):
+                        entries = log_list.get("entries", [])
+                        log_count = len(entries)
+                        total_log_bytes = sum(e.get("size", 0) for e in entries)
+                except Exception:
+                    pass
+                try:
+                    full_result = await sensor.get_resource("/Mem/Logbook/IsFull")
+                    if full_result.get("success") and full_result.get("data"):
+                        memory_full = bool(full_result["data"][0])
+                except Exception:
+                    pass
+
+                flash_capacity = 128 * 1024 * 1024  # 128 MB
+                memory_pct = round(total_log_bytes / flash_capacity * 100, 1) if flash_capacity else 0
+
                 # Probe capabilities
                 capabilities = {}
                 for sid, rates in [("ecg", [125, 200, 250, 500, 512]), ("acc", [13, 26, 52, 104, 208]),
@@ -502,7 +524,10 @@ class ViewerHandler:
                     "firmware": status.get("app_version", "unknown"),
                     "dlstate": status.get("dlstate", 1),
                     "dlstate_name": {1: "Unknown", 2: "Ready", 3: "Logging"}.get(status.get("dlstate", 1), "Unknown"),
-                    "memory_pct": 0,
+                    "memory_pct": memory_pct,
+                    "memory_full": memory_full,
+                    "log_count": log_count,
+                    "total_log_bytes": total_log_bytes,
                     "logging_config": {"count": config_count, "paths": config_paths},
                     "capabilities": capabilities,
                 }
