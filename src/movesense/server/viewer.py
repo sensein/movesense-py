@@ -220,6 +220,32 @@ class LiveDataSource:
         self.is_streaming = False
         self._queue = None
 
+    @staticmethod
+    def _map_channel(path: str) -> tuple[str, str]:
+        """Map BLE subscription path to display name and unit."""
+        pl = path.lower()
+        if '/ecg/' in pl and '/mv' in pl:
+            return "ECG (mV)", "mV"
+        if '/ecg/' in pl:
+            return "ECG (raw)", "LSB"
+        if '/imu9/' in pl:
+            return "IMU 9-axis", "m/s²+dps+µT"
+        if '/imu6m/' in pl:
+            return "IMU 6-axis (Acc+Mag)", "m/s²+µT"
+        if '/imu6/' in pl:
+            return "IMU 6-axis (Acc+Gyro)", "m/s²+dps"
+        if '/acc/' in pl:
+            return "Accelerometer", "m/s²"
+        if '/gyro/' in pl:
+            return "Gyroscope", "dps"
+        if '/magn/' in pl:
+            return "Magnetometer", "µT"
+        if '/temp' in pl:
+            return "Temperature (K)", "K"
+        if '/hr' in pl:
+            return "Heart Rate", "bpm"
+        return path.split('/')[-1] or path, ""
+
     async def get_next(self) -> Optional[dict]:
         """Get next data packet from BLE stream."""
         if not self._queue:
@@ -227,21 +253,24 @@ class LiveDataSource:
         try:
             msg = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             if msg.get("type") == "data":
-                channel = msg.get("channel", "")
+                raw_channel = msg.get("channel", "")
                 values = msg.get("values", [])
                 t_seconds = msg.get("timestamp", 0)  # seconds since stream start
+
+                # Map BLE path to proper display name + unit
+                channel, unit = self._map_channel(raw_channel)
 
                 # Set UTC base on first packet
                 if self._utc_base is None:
                     self._utc_base = time.time() - t_seconds
 
-                # Estimate rate from channel path
+                # Estimate rate from raw channel path
                 import re
                 rate = 200
-                m = re.search(r'/(\d+)/', channel)
+                m = re.search(r'/(\d+)/', raw_channel)
                 if m:
                     rate = int(m.group(1))
-                elif 'hr' in channel.lower() or 'temp' in channel.lower():
+                elif 'hr' in raw_channel.lower() or 'temp' in raw_channel.lower():
                     rate = 1
 
                 # Build time array: packet timestamp + sample offset
@@ -255,6 +284,7 @@ class LiveDataSource:
                     "channel": channel,
                     "time": time_arr,
                     "values": values,
+                    "unit": unit,
                     "source": "live",
                     "prefetch": False,
                 }
@@ -432,6 +462,9 @@ class ViewerHandler:
             return
         await self._send({"type": "busy", "message": "Starting live stream..."})
         try:
+            # If StreamManager was recently stopped, wait for BLE release
+            if self._stream_manager.state.value in ("idle",):
+                await asyncio.sleep(2)
             await asyncio.wait_for(
                 self.live.start(self._stream_manager, self.state.serial, channels),
                 timeout=15.0,

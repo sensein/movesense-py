@@ -208,10 +208,12 @@ class ChartRenderer {
         splitLine: { show: true, lineStyle: { color: '#f0f0f0' } },
       });
 
-      const shortName = name.split('/').pop() || name;
+      // Use channel name directly if it's a display name, otherwise extract from path
+      const shortName = name.includes('(') || !name.includes('/') ? name : (name.split('/').pop() || name);
       yAxes.push({
         type: 'value',
         gridIndex: idx,
+        scale: true,  // Don't force min=0; tight fit to data range
         name: `${shortName}\n${ch.unit ? '(' + ch.unit + ')' : ''}`,
         nameLocation: 'middle',
         nameGap: 40,
