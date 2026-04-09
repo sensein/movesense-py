@@ -87,7 +87,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script src="/static/viewer.js?v=20260408h"></script>
+  <script src="/static/viewer.js?v=20260408j"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
@@ -201,6 +201,10 @@
     let _currentMode = 'stored';
     function setMode(mode) {
       if (!viewer) return;
+      // Toggle: if already in live, switch to stored
+      if (mode === 'live' && _currentMode === 'live') {
+        mode = 'stored';
+      }
       _currentMode = mode;
       if (mode === 'live') {
         // Get stream channels from settings panel
@@ -272,7 +276,8 @@
     }
 
     function buildConfigCheckboxes(capabilities, loggingConfig) {
-      const paths = (loggingConfig?.paths || []).map(p => p.toLowerCase());
+      const logPaths = (loggingConfig?.paths || []).map(p => p.toLowerCase());
+      const defaultStream = ['ecg', 'imu9', 'temp', 'hr'];
       const logEl = document.getElementById('logging-channels');
       const streamEl = document.getElementById('stream-channels');
       let logHtml = '', streamHtml = '';
@@ -284,10 +289,12 @@
         { id: 'hr', label: 'HR', path: '/Meas/HR', rates: [] },
       ];
       for (const ch of channels) {
-        const checked = paths.some(p => p.includes(ch.id)) ? 'checked' : '';
+        const logChecked = logPaths.some(p => p.includes(ch.id)) ? 'checked' : '';
+        const streamChecked = defaultStream.includes(ch.id) ? 'checked' : '';
         const rateSelect = ch.rates.length > 0 ? `<select id="log-rate-${ch.id}" style="font-size:0.7rem;">${ch.rates.map(r => `<option value="${r}">${r}Hz</option>`).join('')}</select>` : '';
-        logHtml += `<label style="display:block;font-size:0.8rem;"><input type="checkbox" id="log-${ch.id}" ${checked}> ${ch.label} ${rateSelect}</label>`;
-        streamHtml += `<label style="display:block;font-size:0.8rem;"><input type="checkbox" id="stream-${ch.id}" ${checked}> ${ch.label} ${rateSelect ? rateSelect.replace(/log-rate/g, 'stream-rate') : ''}</label>`;
+        const streamRateSelect = ch.rates.length > 0 ? `<select id="stream-rate-${ch.id}" style="font-size:0.7rem;">${ch.rates.map(r => `<option value="${r}">${r}Hz</option>`).join('')}</select>` : '';
+        logHtml += `<label style="display:block;font-size:0.8rem;"><input type="checkbox" id="log-${ch.id}" ${logChecked}> ${ch.label} ${rateSelect}</label>`;
+        streamHtml += `<label style="display:block;font-size:0.8rem;"><input type="checkbox" id="stream-${ch.id}" ${streamChecked}> ${ch.label} ${streamRateSelect}</label>`;
       }
       logEl.innerHTML = logHtml;
       streamEl.innerHTML = streamHtml;
