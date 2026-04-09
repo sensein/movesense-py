@@ -38,9 +38,9 @@
 
   <h1>Movesense Viewer</h1>
   <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap;">
-    <div id="device-list" class="device-list" style="flex:1;"></div>
+    <div id="device-list" class="device-list"></div>
     <button id="btn-live" onclick="setMode('live')" class="device-btn" style="font-size:0.75rem;display:none;background:#22c55e;color:white;border-color:#22c55e;">● Live</button>
-    <button onclick="toggleSettings()" style="font-size:1.2rem;background:none;border:none;cursor:pointer;" title="Settings">⚙</button>
+    <button onclick="toggleSettings()" class="device-btn" style="font-size:0.85rem;" title="Settings">⚙ Settings</button>
   </div>
   <div id="controls"></div>
   <div id="status" class="status"></div>
@@ -87,7 +87,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script src="/static/viewer.js?v=20260408n"></script>
+  <script src="/static/viewer.js?v=20260408p"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
