@@ -394,9 +394,15 @@ class ViewerHandler:
 
     async def _switch_to_live(self):
         if not self.state.serial or not self._stream_manager:
-            await self._send({"type": "error", "message": "No device connected"})
+            await self._send({"type": "error", "message": "Connect device in Settings first"})
             return
-        channels = self._stream_channels or ["/Meas/Ecg/200/mV"]
+        if not self._device_connected:
+            await self._send({"type": "error", "message": "Device not connected"})
+            return
+        channels = self._stream_channels
+        if not channels:
+            await self._send({"type": "error", "message": "Configure stream channels in Settings first"})
+            return
         await self._send({"type": "busy", "message": "Starting live stream..."})
         try:
             await self.live.start(self._stream_manager, self.state.serial, channels)

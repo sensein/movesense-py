@@ -39,10 +39,7 @@
   <h1>Movesense Viewer</h1>
   <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap;">
     <div id="device-list" class="device-list" style="flex:1;"></div>
-    <div id="mode-toggle" style="display:none;">
-      <button id="btn-stored" onclick="setMode('stored')" class="device-btn active" style="font-size:0.75rem;">Stored</button>
-      <button id="btn-live" onclick="setMode('live')" class="device-btn" style="font-size:0.75rem;opacity:0.5;" disabled>Live</button>
-    </div>
+    <button id="btn-live" onclick="setMode('live')" class="device-btn" style="font-size:0.75rem;display:none;background:#22c55e;color:white;border-color:#22c55e;">● Live</button>
     <button onclick="toggleSettings()" style="font-size:1.2rem;background:none;border:none;cursor:pointer;" title="Settings">⚙</button>
   </div>
   <div id="controls"></div>
@@ -83,8 +80,9 @@
     </div>
     <!-- Stream Config -->
     <div id="stream-config-section" style="margin-bottom:1rem;display:none;">
-      <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;">Stream Channels</div>
+      <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;">Stream Channels (for Live mode)</div>
       <div id="stream-channels" style="font-size:0.8rem;"></div>
+      <button onclick="applyStreamConfig()" style="font-size:0.75rem;margin-top:0.25rem;">Apply Stream Config</button>
     </div>
   </div>
 
@@ -174,8 +172,11 @@
         } else if (msg.type === 'device_status') {
           updateDeviceStatus(msg);
         } else if (msg.type === 'mode_changed') {
-          document.getElementById('btn-stored').classList.toggle('active', msg.mode === 'stored');
-          document.getElementById('btn-live').classList.toggle('active', msg.mode === 'live');
+          _currentMode = msg.mode;
+          if (msg.mode === 'stored') {
+            document.getElementById('btn-live').textContent = '● Live';
+            document.getElementById('btn-live').style.background = '#22c55e';
+          }
         } else {
           controlPanel.updateStatus(msg);
           document.getElementById('status').textContent = msg.state || '';
@@ -187,8 +188,6 @@
         document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
       };
 
-      // Show mode toggle
-      document.getElementById('mode-toggle').style.display = '';
       // Pre-fill settings serial
       document.getElementById('settings-serial').value = serial;
 
@@ -199,8 +198,42 @@
     }
 
     // --- Mode toggle ---
+    let _currentMode = 'stored';
     function setMode(mode) {
-      if (viewer) viewer.send({ type: 'mode', mode });
+      if (!viewer) return;
+      _currentMode = mode;
+      if (mode === 'live') {
+        // Get stream channels from settings panel
+        const streamChannels = getStreamChannels();
+        if (!streamChannels.length) {
+          document.getElementById('status').innerHTML = '<span class="error">Configure stream channels in Settings first</span>';
+          return;
+        }
+        chartRenderer.clear();
+        chartRenderer.enterLiveMode(streamChannels);
+        document.getElementById('btn-live').textContent = '⏹ Stop Live';
+        document.getElementById('btn-live').style.background = '#ef4444';
+      } else {
+        chartRenderer.enterStoredMode();
+        document.getElementById('btn-live').textContent = '● Live';
+        document.getElementById('btn-live').style.background = '#22c55e';
+      }
+      viewer.send({ type: 'mode', mode });
+    }
+
+    function getStreamChannels() {
+      const channels = [];
+      for (const ch of ['ecg', 'imu9', 'acc', 'temp', 'hr']) {
+        const chk = document.getElementById('stream-' + ch);
+        if (chk?.checked) {
+          const templates = { ecg: '/Meas/Ecg/{rate}/mV', imu9: '/Meas/IMU9/{rate}', acc: '/Meas/Acc/{rate}', temp: '/Meas/Temp', hr: '/Meas/HR' };
+          let path = templates[ch];
+          const rateSel = document.getElementById('stream-rate-' + ch);
+          if (rateSel) path = path.replace('{rate}', rateSel.value);
+          channels.push(path);
+        }
+      }
+      return channels;
     }
 
     // --- Settings panel ---
@@ -219,9 +252,8 @@
       const info = document.getElementById('device-info');
       if (s.connected) {
         info.innerHTML = `🔋 ${s.battery ?? '?'}% | v${s.firmware ?? '?'} | ${s.dlstate_name ?? '?'} | ${s.memory_pct ?? 0}% mem`;
-        // Enable live button
-        document.getElementById('btn-live').disabled = false;
-        document.getElementById('btn-live').style.opacity = '1';
+        // Show live button (next to device buttons)
+        document.getElementById('btn-live').style.display = '';
         // Show config/recording/data sections
         document.getElementById('logging-config-section').style.display = '';
         document.getElementById('recording-section').style.display = '';
@@ -235,8 +267,7 @@
         if (s.capabilities) buildConfigCheckboxes(s.capabilities, s.logging_config);
       } else {
         info.textContent = 'Not connected';
-        document.getElementById('btn-live').disabled = true;
-        document.getElementById('btn-live').style.opacity = '0.5';
+        document.getElementById('btn-live').style.display = 'none';
       }
     }
 
@@ -289,6 +320,14 @@
 
     function fetchLogs() { if (viewer) viewer.send({ type: 'device_fetch' }); }
     function eraseMem() { if (viewer) viewer.send({ type: 'device_erase' }); }
+
+    function applyStreamConfig() {
+      const channels = getStreamChannels();
+      if (viewer && channels.length) {
+        viewer.send({ type: 'stream_config', channels });
+        document.getElementById('status').textContent = `Stream config: ${channels.length} channels configured`;
+      }
+    }
 
     // --- Confirmation overlay ---
     let _confirmRequireText = null;
