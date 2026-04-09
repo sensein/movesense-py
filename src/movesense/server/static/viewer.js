@@ -241,8 +241,9 @@ class ChartRenderer {
 
     // Preserve dataZoom range across re-renders
     let savedZoom = null;
-    if (this._chart.getOption().dataZoom) {
-      const dz = this._chart.getOption().dataZoom[0];
+    const currentOpt = this._chart.getOption();
+    if (currentOpt && currentOpt.dataZoom && currentOpt.dataZoom.length > 0) {
+      const dz = currentOpt.dataZoom[0];
       if (dz && (dz.start !== 0 || dz.end !== 100)) {
         savedZoom = { startValue: dz.startValue, endValue: dz.endValue };
       }
