@@ -37,7 +37,9 @@ class ViewerClient {
             this.onData(msg);
           }
         }
-        else if (msg.type === 'status' && this.onStatus) this.onStatus(msg);
+        else if (['status','busy','busy_done','confirm','device_status','mode_changed'].includes(msg.type)) {
+          if (this.onStatus) this.onStatus(msg);
+        }
         else if (msg.type === 'error' && this.onError) this.onError(msg.message);
       } catch (err) {}
     };
@@ -70,14 +72,20 @@ class ChartRenderer {
     const isMulti = Array.isArray(packet.values[0]) && packet.values[0] != null && packet.values[0].length > 1;
     const axes = isMulti ? packet.values[0].length : 1;
 
-    if (packet.source === 'live' && this._channels[ch]) {
+    if (packet.source === 'live') {
+      if (!this._channels[ch]) {
+        // First live packet for this channel
+        this._channels[ch] = { time: [], values: [], axes, unit: packet.unit || '', source: 'live' };
+      }
       const existing = this._channels[ch];
+      existing.source = 'live';
       existing.time = existing.time.concat(packet.time);
       existing.values = existing.values.concat(packet.values);
-      // Trim to 30s
+      // Trim to liveWindowSeconds
+      const windowS = this.liveWindowSeconds || 30;
       if (existing.time.length > 1) {
         const maxT = existing.time[existing.time.length - 1];
-        const cutoff = maxT - 30;
+        const cutoff = maxT - windowS;
         let i = 0;
         while (i < existing.time.length && existing.time[i] < cutoff) i++;
         if (i > 0) { existing.time = existing.time.slice(i); existing.values = existing.values.slice(i); }
@@ -86,8 +94,28 @@ class ChartRenderer {
       this._channels[ch] = { time: packet.time, values: packet.values, axes, unit: packet.unit || '', source: packet.source };
     }
 
-    clearTimeout(this._debounceTimer);
-    this._debounceTimer = setTimeout(() => this._render(), 80);
+    // Throttle render: at most every 200ms for live, 80ms for stored
+    const interval = packet.source === 'live' ? 200 : 80;
+    if (!this._debounceTimer) {
+      this._debounceTimer = setTimeout(() => {
+        this._debounceTimer = null;
+        this._render();
+      }, interval);
+    }
+  }
+
+  /** Switch to live mode: clear stored channels, prepare for live data */
+  enterLiveMode(channels) {
+    this._channels = {};
+    this._liveMode = true;
+    if (this._chart) { this._chart.dispose(); this._chart = null; }
+    this.container.innerHTML = '<div style="padding:1rem;text-align:center;color:#999;font-size:0.8rem">Waiting for live data...</div>';
+  }
+
+  /** Switch to stored mode */
+  enterStoredMode() {
+    this._liveMode = false;
+    // Stored data will arrive via update() and trigger render
   }
 
   clear() {
@@ -234,6 +262,21 @@ class ChartRenderer {
       }
     }
 
+    // In live mode: set X-axis to sliding window, hide dataZoom
+    if (this._liveMode) {
+      let maxT = -Infinity;
+      for (const ch of Object.values(this._channels)) {
+        if (ch.time.length > 0) maxT = Math.max(maxT, ch.time[ch.time.length - 1] * 1000);
+      }
+      const windowMs = (this.liveWindowSeconds || 30) * 1000;
+      if (maxT > -Infinity) {
+        for (const xa of xAxes) {
+          xa.min = maxT - windowMs;
+          xa.max = maxT;
+        }
+      }
+    }
+
     const option = {
       animation: false,
       grid: grids,
@@ -241,7 +284,7 @@ class ChartRenderer {
       yAxis: yAxes,
       series,
       tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-      dataZoom: [
+      dataZoom: this._liveMode ? [] : [
         { type: 'slider', xAxisIndex: xAxes.map((_, i) => i), bottom: 5, height: 25,
           showDataShadow: true, filterMode: 'none',
           labelFormatter: (val) => {
