@@ -17,11 +17,76 @@
   </style>
 </head>
 <body>
+  <!-- Busy overlay -->
+  <div id="busy-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;justify-content:center;align-items:center;">
+    <div style="background:white;padding:2rem 3rem;border-radius:0.75rem;text-align:center;font-size:1rem;" id="busy-msg">Working...</div>
+  </div>
+  <!-- Confirmation overlay -->
+  <div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;justify-content:center;align-items:center;">
+    <div style="background:white;padding:1.5rem 2rem;border-radius:0.75rem;max-width:400px;width:90%;">
+      <div id="confirm-title" style="font-weight:600;margin-bottom:0.5rem;"></div>
+      <div id="confirm-body" style="font-size:0.85rem;color:#666;margin-bottom:0.75rem;"></div>
+      <div id="confirm-input-wrap" style="display:none;margin-bottom:0.75rem;">
+        <input id="confirm-input" type="text" style="width:100%;padding:0.4rem;font-size:0.85rem;border:1px solid #ddd;border-radius:0.25rem;" autocomplete="off">
+      </div>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+        <button onclick="respondConfirm(false)" style="padding:0.4rem 1rem;">Cancel</button>
+        <button id="confirm-ok-btn" onclick="respondConfirm(true)" style="padding:0.4rem 1rem;background:#ef4444;color:white;border:none;border-radius:0.25rem;">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <h1>Movesense Viewer</h1>
-  <div id="device-list" class="device-list">Loading devices...</div>
+  <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap;">
+    <div id="device-list" class="device-list" style="flex:1;"></div>
+    <div id="mode-toggle" style="display:none;">
+      <button id="btn-stored" onclick="setMode('stored')" class="device-btn active" style="font-size:0.75rem;">Stored</button>
+      <button id="btn-live" onclick="setMode('live')" class="device-btn" style="font-size:0.75rem;opacity:0.5;" disabled>Live</button>
+    </div>
+    <button onclick="toggleSettings()" style="font-size:1.2rem;background:none;border:none;cursor:pointer;" title="Settings">⚙</button>
+  </div>
   <div id="controls"></div>
   <div id="status" class="status"></div>
   <div id="charts" style="width:100%;"></div>
+
+  <!-- Settings panel (slide-out) -->
+  <div id="settings-panel" style="display:none;position:fixed;right:0;top:0;bottom:0;width:320px;background:white;box-shadow:-2px 0 8px rgba(0,0,0,0.15);z-index:100;padding:1rem;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <h3 style="font-size:1rem;">Settings</h3>
+      <button onclick="toggleSettings()" style="font-size:1.2rem;background:none;border:none;cursor:pointer;">✕</button>
+    </div>
+    <!-- Connection -->
+    <div style="margin-bottom:1rem;">
+      <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;">Connection</div>
+      <div style="display:flex;gap:0.25rem;">
+        <input id="settings-serial" type="text" placeholder="Device serial" style="flex:1;padding:0.3rem;font-size:0.8rem;">
+        <button onclick="deviceConnect()" id="btn-device-connect" style="font-size:0.75rem;padding:0.3rem 0.5rem;">Connect</button>
+      </div>
+      <div id="device-info" style="font-size:0.75rem;color:#666;margin-top:0.25rem;"></div>
+    </div>
+    <!-- Logging Config -->
+    <div id="logging-config-section" style="margin-bottom:1rem;display:none;">
+      <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;">Logging Config</div>
+      <div id="logging-channels" style="font-size:0.8rem;"></div>
+      <button onclick="applyLoggingConfig()" id="btn-apply-config" style="font-size:0.75rem;margin-top:0.25rem;">Apply Config</button>
+    </div>
+    <!-- Recording -->
+    <div id="recording-section" style="margin-bottom:1rem;display:none;">
+      <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;">Recording</div>
+      <button onclick="toggleRecording()" id="btn-record" style="font-size:0.75rem;">🔴 Record</button>
+    </div>
+    <!-- Data Management -->
+    <div id="data-mgmt-section" style="margin-bottom:1rem;display:none;">
+      <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;">Data Management</div>
+      <button onclick="fetchLogs()" style="font-size:0.75rem;">Download Logs</button>
+      <button onclick="eraseMem()" style="font-size:0.75rem;color:#ef4444;">Erase Memory</button>
+    </div>
+    <!-- Stream Config -->
+    <div id="stream-config-section" style="margin-bottom:1rem;display:none;">
+      <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.25rem;">Stream Channels</div>
+      <div id="stream-channels" style="font-size:0.8rem;"></div>
+    </div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <script src="/static/viewer.js?v=20260408h"></script>
@@ -97,19 +162,159 @@
         }
       };
 
-      viewer.onStatus = (status) => {
-        controlPanel.updateStatus(status);
-        document.getElementById('status').textContent = status.state || 'unknown';
+      viewer.onStatus = (msg) => {
+        // Handle all server message types routed through onStatus
+        if (msg.type === 'busy') {
+          document.getElementById('busy-msg').textContent = msg.message || 'Working...';
+          document.getElementById('busy-overlay').style.display = 'flex';
+        } else if (msg.type === 'busy_done') {
+          document.getElementById('busy-overlay').style.display = 'none';
+        } else if (msg.type === 'confirm') {
+          showConfirm(msg.title, msg.body, msg.require_text);
+        } else if (msg.type === 'device_status') {
+          updateDeviceStatus(msg);
+        } else if (msg.type === 'mode_changed') {
+          document.getElementById('btn-stored').classList.toggle('active', msg.mode === 'stored');
+          document.getElementById('btn-live').classList.toggle('active', msg.mode === 'live');
+        } else {
+          controlPanel.updateStatus(msg);
+          document.getElementById('status').textContent = msg.state || '';
+        }
       };
 
       viewer.onError = (msg) => {
+        document.getElementById('busy-overlay').style.display = 'none';
         document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
       };
+
+      // Show mode toggle
+      document.getElementById('mode-toggle').style.display = '';
+      // Pre-fill settings serial
+      document.getElementById('settings-serial').value = serial;
 
       viewer.connect();
       viewer.ws.addEventListener('open', () => {
         viewer.selectDevice(serial);
       });
+    }
+
+    // --- Mode toggle ---
+    function setMode(mode) {
+      if (viewer) viewer.send({ type: 'mode', mode });
+    }
+
+    // --- Settings panel ---
+    function toggleSettings() {
+      const panel = document.getElementById('settings-panel');
+      panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    }
+
+    function deviceConnect() {
+      const serial = document.getElementById('settings-serial').value.trim();
+      if (!serial || !viewer) return;
+      viewer.send({ type: 'device_connect', serial });
+    }
+
+    function updateDeviceStatus(s) {
+      const info = document.getElementById('device-info');
+      if (s.connected) {
+        info.innerHTML = `🔋 ${s.battery ?? '?'}% | v${s.firmware ?? '?'} | ${s.dlstate_name ?? '?'} | ${s.memory_pct ?? 0}% mem`;
+        // Enable live button
+        document.getElementById('btn-live').disabled = false;
+        document.getElementById('btn-live').style.opacity = '1';
+        // Show config/recording/data sections
+        document.getElementById('logging-config-section').style.display = '';
+        document.getElementById('recording-section').style.display = '';
+        document.getElementById('data-mgmt-section').style.display = '';
+        document.getElementById('stream-config-section').style.display = '';
+        // Update record button
+        const isLogging = s.dlstate === 3;
+        document.getElementById('btn-record').innerHTML = isLogging ? '⏹ Stop' : '🔴 Record';
+        document.getElementById('btn-record').className = isLogging ? 'danger' : '';
+        // Build channel checkboxes from capabilities
+        if (s.capabilities) buildConfigCheckboxes(s.capabilities, s.logging_config);
+      } else {
+        info.textContent = 'Not connected';
+        document.getElementById('btn-live').disabled = true;
+        document.getElementById('btn-live').style.opacity = '0.5';
+      }
+    }
+
+    function buildConfigCheckboxes(capabilities, loggingConfig) {
+      const paths = (loggingConfig?.paths || []).map(p => p.toLowerCase());
+      const logEl = document.getElementById('logging-channels');
+      const streamEl = document.getElementById('stream-channels');
+      let logHtml = '', streamHtml = '';
+      const channels = [
+        { id: 'ecg', label: 'ECG', path: '/Meas/Ecg/{rate}/mV', rates: capabilities.ecg?.rates || [200] },
+        { id: 'imu9', label: 'IMU9', path: '/Meas/IMU9/{rate}', rates: capabilities.imu9?.rates || [52] },
+        { id: 'acc', label: 'Acc', path: '/Meas/Acc/{rate}', rates: capabilities.acc?.rates || [52] },
+        { id: 'temp', label: 'Temp', path: '/Meas/Temp', rates: [] },
+        { id: 'hr', label: 'HR', path: '/Meas/HR', rates: [] },
+      ];
+      for (const ch of channels) {
+        const checked = paths.some(p => p.includes(ch.id)) ? 'checked' : '';
+        const rateSelect = ch.rates.length > 0 ? `<select id="log-rate-${ch.id}" style="font-size:0.7rem;">${ch.rates.map(r => `<option value="${r}">${r}Hz</option>`).join('')}</select>` : '';
+        logHtml += `<label style="display:block;font-size:0.8rem;"><input type="checkbox" id="log-${ch.id}" ${checked}> ${ch.label} ${rateSelect}</label>`;
+        streamHtml += `<label style="display:block;font-size:0.8rem;"><input type="checkbox" id="stream-${ch.id}" ${checked}> ${ch.label} ${rateSelect ? rateSelect.replace(/log-rate/g, 'stream-rate') : ''}</label>`;
+      }
+      logEl.innerHTML = logHtml;
+      streamEl.innerHTML = streamHtml;
+    }
+
+    function applyLoggingConfig() {
+      const paths = [];
+      for (const ch of ['ecg', 'imu9', 'acc', 'temp', 'hr']) {
+        const chk = document.getElementById(`log-${ch}`);
+        if (chk?.checked) {
+          const templates = { ecg: '/Meas/Ecg/{rate}/mV', imu9: '/Meas/IMU9/{rate}', acc: '/Meas/Acc/{rate}', temp: '/Meas/Temp', hr: '/Meas/HR' };
+          let path = templates[ch];
+          const rateSel = document.getElementById(`log-rate-${ch}`);
+          if (rateSel) path = path.replace('{rate}', rateSel.value);
+          paths.push(path);
+        }
+      }
+      if (viewer) viewer.send({ type: 'device_config', paths });
+    }
+
+    function toggleRecording() {
+      if (!viewer) return;
+      const btn = document.getElementById('btn-record');
+      if (btn.textContent.includes('Stop')) {
+        viewer.send({ type: 'device_stop' });
+      } else {
+        viewer.send({ type: 'device_start' });
+      }
+    }
+
+    function fetchLogs() { if (viewer) viewer.send({ type: 'device_fetch' }); }
+    function eraseMem() { if (viewer) viewer.send({ type: 'device_erase' }); }
+
+    // --- Confirmation overlay ---
+    let _confirmRequireText = null;
+    function showConfirm(title, body, requireText) {
+      document.getElementById('confirm-title').textContent = title;
+      document.getElementById('confirm-body').innerHTML = body;
+      _confirmRequireText = requireText || null;
+      const inputWrap = document.getElementById('confirm-input-wrap');
+      const input = document.getElementById('confirm-input');
+      const okBtn = document.getElementById('confirm-ok-btn');
+      if (_confirmRequireText) {
+        inputWrap.style.display = '';
+        input.value = '';
+        input.placeholder = `Type "${_confirmRequireText}" to confirm`;
+        input.oninput = () => { okBtn.disabled = input.value.trim().toLowerCase() !== _confirmRequireText; };
+        okBtn.disabled = true;
+      } else {
+        inputWrap.style.display = 'none';
+        okBtn.disabled = false;
+      }
+      document.getElementById('confirm-overlay').style.display = 'flex';
+    }
+
+    function respondConfirm(confirmed) {
+      document.getElementById('confirm-overlay').style.display = 'none';
+      if (viewer) viewer.send({ type: 'confirm_response', confirmed });
     }
 
     function resetZoom() {

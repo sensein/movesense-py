@@ -37,7 +37,9 @@ class ViewerClient {
             this.onData(msg);
           }
         }
-        else if (msg.type === 'status' && this.onStatus) this.onStatus(msg);
+        else if (['status','busy','busy_done','confirm','device_status','mode_changed'].includes(msg.type)) {
+          if (this.onStatus) this.onStatus(msg);
+        }
         else if (msg.type === 'error' && this.onError) this.onError(msg.message);
       } catch (err) {}
     };

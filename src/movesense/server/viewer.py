@@ -27,6 +27,7 @@ class ViewState:
     width_px: int = 1200
     channels: list[str] = field(default_factory=list)
     last_push_time: float = 0
+    mode: str = "stored"  # "stored" or "live"
 
 
 class StoredDataSource:
@@ -242,11 +243,15 @@ class ViewerHandler:
 
     def __init__(self, ws: WebSocket, data_dir: Path, stream_manager=None):
         self.ws = ws
+        self.data_dir = data_dir
         self.state = ViewState()
         self.stored = StoredDataSource(data_dir)
         self.live = LiveDataSource()
         self._stream_manager = stream_manager
         self._running = False
+        self._device_connected = False
+        self._stream_channels = []  # channels for live streaming (independent of logging)
+        self._pending_confirm = None  # callback for confirm response
 
     async def run(self):
         """Main message loop."""
@@ -310,18 +315,45 @@ class ViewerHandler:
             self.state.channels = msg.get("channels", self.state.channels)
             await self._push_data()
 
-        elif msg_type == "stream":
-            action = msg.get("action")
-            if action == "start" and self._stream_manager:
-                channels = msg.get("channels", [])
-                await self.live.start(self._stream_manager, self.state.serial, channels)
-                await self._send({"type": "status", "state": "streaming"})
-            elif action == "stop" and self._stream_manager:
-                await self.live.stop(self._stream_manager)
-                await self._send({"type": "status", "state": "idle"})
+        elif msg_type == "mode":
+            mode = msg.get("mode", "stored")
+            if mode == "live":
+                await self._switch_to_live()
+            else:
+                await self._switch_to_stored()
+
+        elif msg_type == "device_connect":
+            await self._device_connect(msg.get("serial", self.state.serial))
+
+        elif msg_type == "device_disconnect":
+            self._device_connected = False
+            await self._send({"type": "device_status", "connected": False})
+
+        elif msg_type == "device_config":
+            await self._device_config(msg.get("paths", []))
+
+        elif msg_type == "device_start":
+            await self._device_start()
+
+        elif msg_type == "device_stop":
+            await self._device_stop()
+
+        elif msg_type == "device_fetch":
+            await self._device_fetch()
+
+        elif msg_type == "device_erase":
+            await self._device_erase()
+
+        elif msg_type == "stream_config":
+            self._stream_channels = msg.get("channels", [])
+
+        elif msg_type == "confirm_response":
+            if self._pending_confirm:
+                cb = self._pending_confirm
+                self._pending_confirm = None
+                await cb(msg.get("confirmed", False))
 
         elif msg_type == "export":
-            # TODO: implement export in future spec
             await self._send({"type": "error", "message": "Export not yet implemented"})
 
     async def _push_data(self):
@@ -357,6 +389,194 @@ class ViewerHandler:
                 if pkt:
                     pkt["prefetch"] = True
                     await self._send(pkt)
+
+    # --- Mode switching ---
+
+    async def _switch_to_live(self):
+        if not self.state.serial or not self._stream_manager:
+            await self._send({"type": "error", "message": "No device connected"})
+            return
+        channels = self._stream_channels or ["/Meas/Ecg/200/mV"]
+        await self._send({"type": "busy", "message": "Starting live stream..."})
+        try:
+            await self.live.start(self._stream_manager, self.state.serial, channels)
+            self.state.mode = "live"
+            await self._send({"type": "mode_changed", "mode": "live", "streaming_channels": channels})
+        except Exception as e:
+            await self._send({"type": "error", "message": f"Failed to start stream: {e}"})
+        finally:
+            await self._send({"type": "busy_done"})
+
+    async def _switch_to_stored(self):
+        if self.live.is_streaming and self._stream_manager:
+            await self.live.stop(self._stream_manager)
+        self.state.mode = "stored"
+        await self._send({"type": "mode_changed", "mode": "stored"})
+        await self._push_data()
+
+    # --- Device control ---
+
+    async def _device_connect(self, serial: str):
+        from ..sensor import SensorCommand
+        self.state.serial = serial
+        await self._send({"type": "busy", "message": "Connecting to device..."})
+        try:
+            async with SensorCommand(serial, set_time=False) as sensor:
+                status = await sensor.get_status()
+                battery = await sensor.get_battery_level()
+                status.update(battery)
+
+                # Read config count
+                config_count = 0
+                config_paths = []
+                try:
+                    cfg = await sensor.get_resource("/Mem/DataLogger/Config")
+                    if cfg.get("success") and cfg.get("data"):
+                        config_count = cfg["data"][0] if cfg["data"] else 0
+                except Exception:
+                    pass
+
+                # Read audit log for last known paths
+                audit_file = self.data_dir / serial / "audit.jsonl"
+                if config_count > 0 and audit_file.exists():
+                    import json as _json
+                    for line in reversed(audit_file.read_text().strip().split("\n")):
+                        try:
+                            entry = _json.loads(line)
+                            if entry.get("action") == "config_change":
+                                config_paths = entry.get("new_paths", [])
+                                break
+                        except Exception:
+                            continue
+
+                # Probe capabilities
+                capabilities = {}
+                for sid, rates in [("ecg", [125, 200, 250, 500, 512]), ("acc", [13, 26, 52, 104, 208]),
+                                   ("imu9", [13, 26, 52, 104, 208]), ("temp", []), ("hr", [])]:
+                    capabilities[sid] = {"rates": rates}
+
+                self._device_connected = True
+                device_status = {
+                    "type": "device_status",
+                    "serial": status.get("serial_number", serial),
+                    "connected": True,
+                    "battery": status.get("battery_level"),
+                    "firmware": status.get("app_version", "unknown"),
+                    "dlstate": status.get("dlstate", 1),
+                    "dlstate_name": {1: "Unknown", 2: "Ready", 3: "Logging"}.get(status.get("dlstate", 1), "Unknown"),
+                    "memory_pct": 0,
+                    "logging_config": {"count": config_count, "paths": config_paths},
+                    "capabilities": capabilities,
+                }
+                await self._send(device_status)
+        except Exception as e:
+            await self._send({"type": "error", "message": f"Device connection failed: {e}"})
+        finally:
+            await self._send({"type": "busy_done"})
+
+    async def _device_config(self, paths: list[str]):
+        from ..sensor import SensorCommand
+        if not self.state.serial:
+            await self._send({"type": "error", "message": "No device connected"})
+            return
+        await self._send({"type": "busy", "message": "Applying configuration..."})
+        try:
+            async with SensorCommand(self.state.serial) as sensor:
+                if "/Time/Detailed" not in paths:
+                    paths.append("/Time/Detailed")
+                config_data = bytearray()
+                for p in paths:
+                    config_data.extend(p.encode("utf-8") + b"\0")
+                result = await sensor.configure_device(config_data)
+                if not result.get("success"):
+                    await self._send({"type": "error", "message": f"Config failed: {result.get('error')}"})
+                else:
+                    await self._send({"type": "device_status", "logging_config": {"paths": paths, "count": len(paths)}})
+        except Exception as e:
+            await self._send({"type": "error", "message": str(e)})
+        finally:
+            await self._send({"type": "busy_done"})
+
+    async def _device_start(self):
+        from ..sensor import SensorCommand
+        await self._send({"type": "busy", "message": "Starting recording..."})
+        try:
+            async with SensorCommand(self.state.serial) as sensor:
+                result = await sensor.start_logging()
+                if result.get("success"):
+                    await self._send({"type": "device_status", "dlstate": 3, "dlstate_name": "Logging"})
+                else:
+                    await self._send({"type": "error", "message": f"Start failed: {result.get('error')}"})
+        except Exception as e:
+            await self._send({"type": "error", "message": str(e)})
+        finally:
+            await self._send({"type": "busy_done"})
+
+    async def _device_stop(self):
+        # Require confirmation
+        await self._send({"type": "confirm", "title": "Stop Recording?",
+                          "body": "This will introduce a gap in the data. Previously recorded data is preserved."})
+        async def on_confirm(confirmed):
+            if not confirmed:
+                return
+            from ..sensor import SensorCommand
+            await self._send({"type": "busy", "message": "Stopping recording..."})
+            try:
+                async with SensorCommand(self.state.serial) as sensor:
+                    result = await sensor.stop_logging()
+                    if result.get("success"):
+                        await self._send({"type": "device_status", "dlstate": 2, "dlstate_name": "Ready"})
+                    else:
+                        await self._send({"type": "error", "message": f"Stop failed: {result.get('error')}"})
+            except Exception as e:
+                await self._send({"type": "error", "message": str(e)})
+            finally:
+                await self._send({"type": "busy_done"})
+        self._pending_confirm = on_confirm
+
+    async def _device_fetch(self):
+        from ..cli import _fetch
+        await self._send({"type": "busy", "message": "Downloading logs from device..."})
+        try:
+            out_dir = self.data_dir / self.state.serial / "fetch_tmp"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            result = await _fetch(self.state.serial, out_dir, edf=False)
+            if result.get("success"):
+                await self._send({"type": "busy", "message": "Refreshing data..."})
+                # Refresh metadata and push to client
+                metadata = self.stored.get_metadata(self.state.serial)
+                await self._send(metadata)
+                await self._push_data()
+            else:
+                await self._send({"type": "error", "message": result.get("error", "Fetch failed")})
+        except Exception as e:
+            await self._send({"type": "error", "message": str(e)})
+        finally:
+            await self._send({"type": "busy_done"})
+
+    async def _device_erase(self):
+        await self._send({"type": "confirm", "title": "Erase Device Memory",
+                          "body": "This will permanently delete ALL logged data from the device.",
+                          "require_text": "erase"})
+        async def on_confirm(confirmed):
+            if not confirmed:
+                return
+            from ..sensor import SensorCommand
+            await self._send({"type": "busy", "message": "Erasing device memory..."})
+            try:
+                async with SensorCommand(self.state.serial, set_time=False) as sensor:
+                    result = await sensor.erase_memory()
+                    if result.get("success"):
+                        await self._send({"type": "device_status", "memory_pct": 0})
+                    else:
+                        await self._send({"type": "error", "message": f"Erase failed: {result.get('error')}"})
+            except Exception as e:
+                await self._send({"type": "error", "message": str(e)})
+            finally:
+                await self._send({"type": "busy_done"})
+        self._pending_confirm = on_confirm
+
+    # --- Messaging ---
 
     async def _send(self, msg: dict):
         """Send JSON message to client."""
