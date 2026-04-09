@@ -87,7 +87,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script src="/static/viewer.js?v=20260408r"></script>
+  <script src="/static/viewer.js?v=20260408s"></script>
   <script>
     const _params = new URLSearchParams(window.location.search);
     const TOKEN = _params.get('token') || sessionStorage.getItem('ms_token') || '';
@@ -110,6 +110,10 @@
         el.innerHTML = data.devices.map(d =>
           `<button class="device-btn" onclick="selectDevice('${d.serial}', this)">${d.serial}<br><span style="font-size:0.7rem;color:#999">${d.date_count} dates</span></button>`
         ).join('');
+        // Pre-fill settings serial with first device
+        if (data.devices.length > 0 && !document.getElementById('settings-serial').value) {
+          document.getElementById('settings-serial').value = data.devices[0].serial;
+        }
       } catch (e) {
         document.getElementById('device-list').innerHTML = `<span class="error">${e.message}</span>`;
       }
@@ -120,90 +124,18 @@
       if (btn) btn.classList.add('active');
 
       if (chartRenderer) chartRenderer.clear();
-      chartRenderer = new ChartRenderer('charts');
-      window.chartRenderer = chartRenderer;
-
-      controlPanel = new ControlPanel('controls');
-      window.controlPanel = controlPanel;
-      controlPanel.onChannelToggle = (channels) => {
-        if (viewer) viewer.subscribe(channels);
-      };
-
-      if (viewer && viewer.ws) viewer.ws.close();
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      viewer = new ViewerClient(`${proto}//${location.host}/ws/viewer?token=${TOKEN}`);
-
-      viewer.onMetadata = (meta) => {
-        controlPanel.buildFromMetadata(meta);
-        chartRenderer._sessions = meta.sessions || [];
-        document.getElementById('status').textContent =
-          `${meta.sessions?.length || 0} sessions | ${meta.channels?.length || 0} channels | ${meta.state}`;
-      };
-
-      viewer.onData = (pkt) => {
-        chartRenderer.update(pkt);
-      };
-
-      // ECharts dataZoom — pan/zoom is local (no server round-trip)
-      // Server already sent overview data for full range on connect.
-      // Only request fresh data when zooming IN past a threshold (higher resolution needed)
-      let _lastDataRange = null;
-      chartRenderer.onViewChange = (startUtcS, endUtcS) => {
-        if (!viewer) return;
-        const range = endUtcS - startUtcS;
-        // Request higher-res data when zoomed to < 10 minutes AND range changed significantly
-        if (range < 600 && (!_lastDataRange || Math.abs(range - _lastDataRange) / _lastDataRange > 0.5)) {
-          _lastDataRange = range;
-          const startUs = Math.round(startUtcS * 1e6);
-          const endUs = Math.round(endUtcS * 1e6);
-          viewer.setView(startUs, endUs, chartRenderer.container.clientWidth || 1200);
-        }
-      };
-
-      viewer.onStatus = (msg) => {
-        // Handle all server message types routed through onStatus
-        if (msg.type === 'busy') {
-          document.getElementById('busy-msg').textContent = msg.message || 'Working...';
-          document.getElementById('busy-overlay').style.display = 'flex';
-        } else if (msg.type === 'busy_done') {
-          document.getElementById('busy-overlay').style.display = 'none';
-        } else if (msg.type === 'confirm') {
-          showConfirm(msg.title, msg.body, msg.require_text);
-        } else if (msg.type === 'device_status') {
-          updateDeviceStatus(msg);
-        } else if (msg.type === 'mode_changed') {
-          _currentMode = msg.mode;
-          if (msg.mode === 'stored') {
-            document.getElementById('btn-live').textContent = '● Live';
-            document.getElementById('btn-live').style.background = '#22c55e';
-            // Re-enable all channel checkboxes
-            if (controlPanel) controlPanel.buildFromMetadata(controlPanel.metadata);
-          } else if (msg.mode === 'live') {
-            // Update channel checkboxes: only streaming channels enabled
-            const streamChs = new Set((msg.streaming_channels || []).map(p => {
-              // Extract channel name from path: /Meas/Ecg/125/mV → MeasEcgmV-ish
-              return p;
-            }));
-            updateChannelCheckboxesForLive(streamChs);
-          }
-        } else {
-          controlPanel.updateStatus(msg);
-          document.getElementById('status').textContent = msg.state || '';
-        }
-      };
-
-      viewer.onError = (msg) => {
-        document.getElementById('busy-overlay').style.display = 'none';
-        document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
-      };
-
-      // Pre-fill settings serial
+      // Close existing viewer WS if switching devices
+      if (viewer && viewer.ws) { viewer.ws.close(); viewer = null; }
+      ensureViewer();
       document.getElementById('settings-serial').value = serial;
 
-      viewer.connect();
       viewer.ws.addEventListener('open', () => {
         viewer.selectDevice(serial);
-      });
+      }, { once: true });
+      // If already open
+      if (viewer.ws.readyState === WebSocket.OPEN) {
+        viewer.selectDevice(serial);
+      }
     }
 
     // --- Mode toggle ---
@@ -257,10 +189,81 @@
       panel.style.display = panel.style.display === 'none' ? '' : 'none';
     }
 
+    function ensureViewer() {
+      // Create viewer WebSocket if not already connected
+      if (viewer && viewer.ws && viewer.ws.readyState === WebSocket.OPEN) return;
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      viewer = new ViewerClient(`${proto}//${location.host}/ws/viewer?token=${TOKEN}`);
+
+      if (!chartRenderer) {
+        chartRenderer = new ChartRenderer('charts');
+        window.chartRenderer = chartRenderer;
+      }
+      if (!controlPanel) {
+        controlPanel = new ControlPanel('controls');
+        window.controlPanel = controlPanel;
+        controlPanel.onChannelToggle = (channels) => { if (viewer) viewer.subscribe(channels); };
+      }
+
+      viewer.onMetadata = (meta) => {
+        controlPanel.buildFromMetadata(meta);
+        chartRenderer._sessions = meta.sessions || [];
+        document.getElementById('status').textContent =
+          `${meta.sessions?.length || 0} sessions | ${meta.channels?.length || 0} channels | ${meta.state}`;
+      };
+      viewer.onData = (pkt) => { chartRenderer.update(pkt); };
+      viewer.onStatus = (msg) => {
+        if (msg.type === 'busy') {
+          document.getElementById('busy-msg').textContent = msg.message || 'Working...';
+          document.getElementById('busy-overlay').style.display = 'flex';
+        } else if (msg.type === 'busy_done') {
+          document.getElementById('busy-overlay').style.display = 'none';
+        } else if (msg.type === 'confirm') {
+          showConfirm(msg.title, msg.body, msg.require_text);
+        } else if (msg.type === 'device_status') {
+          updateDeviceStatus(msg);
+        } else if (msg.type === 'mode_changed') {
+          _currentMode = msg.mode;
+          if (msg.mode === 'stored') {
+            document.getElementById('btn-live').textContent = '● Live';
+            document.getElementById('btn-live').style.background = '#22c55e';
+            if (controlPanel) controlPanel.buildFromMetadata(controlPanel.metadata);
+          } else if (msg.mode === 'live') {
+            const streamChs = new Set(msg.streaming_channels || []);
+            updateChannelCheckboxesForLive(streamChs);
+          }
+        } else {
+          controlPanel?.updateStatus(msg);
+          document.getElementById('status').textContent = msg.state || '';
+        }
+      };
+      viewer.onError = (msg) => {
+        document.getElementById('busy-overlay').style.display = 'none';
+        document.getElementById('status').innerHTML = `<span class="error">${msg}</span>`;
+      };
+      chartRenderer.onViewChange = (startUtcS, endUtcS) => {
+        if (!viewer) return;
+        const range = endUtcS - startUtcS;
+        if (range < 600) {
+          viewer.setView(Math.round(startUtcS * 1e6), Math.round(endUtcS * 1e6), chartRenderer.container.clientWidth || 1200);
+        }
+      };
+
+      viewer.connect();
+    }
+
     function deviceConnect() {
       const serial = document.getElementById('settings-serial').value.trim();
-      if (!serial || !viewer) return;
-      viewer.send({ type: 'device_connect', serial });
+      if (!serial) return;
+      ensureViewer();
+      // Wait for WS open then send
+      if (viewer.ws.readyState === WebSocket.OPEN) {
+        viewer.send({ type: 'device_connect', serial });
+      } else {
+        viewer.ws.addEventListener('open', () => {
+          viewer.send({ type: 'device_connect', serial });
+        }, { once: true });
+      }
     }
 
     function updateDeviceStatus(s) {
